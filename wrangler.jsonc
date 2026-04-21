@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "reidsantabarbara",
+  "account_id": "e0e78e7fb6b1ebdb0ab08e2fa17506de",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-04-17",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "vars": {
+    "NEXT_PUBLIC_SUPABASE_URL": "https://hqgisrfauiwpqetzuhar.supabase.co",
+    "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_MGKeWYHy7SueFOd3RaeOSw_oZW2OBm0"
+  },
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "reidsantabarbara"
+    }
+  ]
+}
