@@ -1,7 +1,21 @@
-import { bio } from "@/data/resumeData";
+import type { Bio } from "@/types/resume";
 
-export function Footer() {
+type FooterProps = {
+  bio?: Bio;
+};
+
+export function Footer({ bio }: FooterProps) {
+  const safeBio: Bio = bio ?? {
+    name: "",
+    title: "",
+    location: "",
+    email: "",
+    summary: "",
+    links: [],
+  };
   const year = new Date().getFullYear();
+  const hasIdentity = Boolean(safeBio.name || safeBio.title || safeBio.location || safeBio.email);
+  const hasLinks = safeBio.links.length > 0;
 
   return (
     <footer
@@ -11,49 +25,57 @@ export function Footer() {
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-8 py-12 sm:flex-row sm:items-end sm:justify-between sm:px-12">
         {/* Left — identity */}
         <div>
-          <p
-            className="text-sm font-light tracking-tight"
-            style={{ color: "#e4e4e7" }}
-          >
-            {bio.name}
-          </p>
-          <p
-            className="mt-1 text-xs font-light"
-            style={{ color: "var(--label)" }}
-          >
-            {bio.title}&nbsp;&nbsp;·&nbsp;&nbsp;{bio.location}
-          </p>
-          <a
-            href={`mailto:${bio.email}`}
-            className="mt-1 inline-block text-xs font-light transition hover:opacity-80"
-            style={{ color: "var(--label)" }}
-          >
-            {bio.email}
-          </a>
+          {hasIdentity ? (
+            <>
+              <p className="text-sm font-light tracking-tight" style={{ color: "#e4e4e7" }}>
+                {safeBio.name || "Your Name"}
+              </p>
+              {(safeBio.title || safeBio.location) ? (
+                <p className="mt-1 text-xs font-light" style={{ color: "var(--label)" }}>
+                  {[safeBio.title, safeBio.location].filter(Boolean).join(" · ")}
+                </p>
+              ) : null}
+              {safeBio.email ? (
+                <a
+                  href={`mailto:${safeBio.email}`}
+                  className="mt-1 inline-block text-xs font-light transition hover:opacity-80"
+                  style={{ color: "var(--label)" }}
+                >
+                  {safeBio.email}
+                </a>
+              ) : null}
+            </>
+          ) : (
+            <p className="text-xs font-light" style={{ color: "var(--label)" }}>
+              Start in the editor to add your profile, resume variants, and project history.
+            </p>
+          )}
         </div>
 
         {/* Right — links + copyright */}
         <div className="flex flex-col items-start gap-4 sm:items-end">
-          <ul className="flex flex-wrap gap-4">
-            {bio.links.map((link) => (
-              <li key={link.label}>
-                <a
-                  href={link.href}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[11px] uppercase tracking-[0.2em] font-light transition hover:opacity-80"
-                  style={{ color: "var(--label)" }}
-                >
-                  {link.label}
-                </a>
-              </li>
-            ))}
-          </ul>
+          {hasLinks ? (
+            <ul className="flex flex-wrap gap-4">
+              {safeBio.links.map((link) => (
+                <li key={link.label}>
+                  <a
+                    href={link.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[11px] uppercase tracking-[0.2em] font-light transition hover:opacity-80"
+                    style={{ color: "var(--label)" }}
+                  >
+                    {link.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          ) : null}
           <p
             className="text-[10px] uppercase tracking-[0.22em] font-light"
             style={{ color: "rgba(255,255,255,0.2)" }}
           >
-            © {year} {bio.name}
+            © {year} {safeBio.name || "Resume Builder"}
           </p>
         </div>
       </div>

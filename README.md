@@ -30,6 +30,7 @@ Template editor: http://localhost:3000/editor
 The editor at /editor provides a blank, fully customizable template flow:
 
 - Shared profile fields, including a hero image
+- AI intake hopper to generate a first draft from resume text, links, and uploaded source documents
 - Multiple resume variants with their own sections, tag dimensions, and timeline tour steps
 - Custom sort/tag dimensions per variant (you define labels + options)
 - Custom sections + items + media assets
@@ -51,10 +52,13 @@ Preview options:
 cp .env.example .env.local
 ```
 
-2. Fill Supabase values in .env.local:
+2. Fill environment values in .env.local:
 
 - NEXT_PUBLIC_SUPABASE_URL
-- NEXT_PUBLIC_SUPABASE_ANON_KEY
+- NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY)
+- LLM_API_KEY
+- (optional) LLM_MODEL
+- (optional) LLM_API_BASE_URL
 
 3. In Supabase SQL editor, run schema:
 
@@ -64,13 +68,18 @@ This creates:
 
 - resume_templates table (JSON template persistence)
 - RLS policies scoped to authenticated users
-- resume-media storage bucket (for user media uploads)
+- resume-media storage bucket (for project asset uploads)
+- resume-hero-images storage bucket (for profile image uploads)
+- resume-source-docs storage bucket (for AI intake source documents)
 
 4. In editor UI:
 
 - Sign in with email magic link
 - Save/load templates to/from Supabase
 - Upload media assets to Supabase Storage bucket resume-media
+- Upload hero images to resume-hero-images
+- Upload AI intake source documents to resume-source-docs
+- Generate draft resume structure from AI intake context
 
 ## Provider setup checklist
 
@@ -90,7 +99,10 @@ cp .env.example .env.local
 4. In Cloudflare Pages/Workers project settings, add runtime env vars used by the app:
 
 - NEXT_PUBLIC_SUPABASE_URL
-- NEXT_PUBLIC_SUPABASE_ANON_KEY
+- NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+- LLM_API_KEY
+- (optional) LLM_MODEL
+- (optional) LLM_API_BASE_URL
 
 ## Deploy to Cloudflare
 

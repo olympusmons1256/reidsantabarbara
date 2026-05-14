@@ -1,8 +1,8 @@
-import type { ResumeTemplate } from "@/types/template";
+import { TEMPLATE_PROFILE_SCOPE_FIELDS, type ResumeTemplate } from "@/types/template";
 
 export const blankTemplate: ResumeTemplate = {
   id: "template-starter",
-  title: "Untitled Resume Template",
+  title: "My Resume Collection",
   profile: {
     name: "",
     title: "",
@@ -10,14 +10,24 @@ export const blankTemplate: ResumeTemplate = {
     email: "",
     summary: "",
     heroImage: "",
+    heroImageFilter: "",
+    bannerBackgroundVideo: "",
+    bannerBackgroundImage: "",
+    bannerVideoOpacity: 42,
+    bannerOverlayOpacity: 72,
+    bannerVideoFilter: "brightness(0.9) saturate(0.95)",
+    bannerVideoUseAudio: false,
+    bannerVideoAudioVolume: 20,
+    bannerVideoDuckedVolume: 8,
     links: [],
   },
   defaultVariantId: "variant-primary",
   variants: [
     {
       id: "variant-primary",
-      title: "Primary Resume",
-      audience: "General",
+      title: "Resume",
+      audience: "",
+      profileScope: [...TEMPLATE_PROFILE_SCOPE_FIELDS],
       tagDimensions: [
         {
           id: "company",
@@ -38,15 +48,7 @@ export const blankTemplate: ResumeTemplate = {
           options: [],
         },
       ],
-      sections: [
-        {
-          id: "section-1",
-          title: "Section 1",
-          subtitle: "",
-          description: "",
-          items: [],
-        },
-      ],
+      sections: [],
       timelineTour: {
         enabled: true,
         steps: [],
@@ -54,5 +56,5 @@ export const blankTemplate: ResumeTemplate = {
     },
   ],
   connections: [],
-  updatedAt: new Date().toISOString(),
+  updatedAt: "",
 };

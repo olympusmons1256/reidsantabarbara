@@ -1,6 +1,11 @@
-import { createBrowserClient } from "@supabase/ssr";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-
-export const createClient = () => createBrowserClient(supabaseUrl!, supabaseKey!);
+export const createClient = () => {
+	const client = getSupabaseBrowserClient();
+	if (!client) {
+		throw new Error(
+			"Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY)."
+		);
+	}
+	return client;
+};

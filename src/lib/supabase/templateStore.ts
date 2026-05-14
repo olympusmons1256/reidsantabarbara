@@ -1,7 +1,122 @@
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import type { ResumeTemplate, StoredTemplateRecord } from "@/types/template";
+import { Upload as TusUpload } from "tus-js-client";
 
 const TABLE = "resume_templates";
+const DEFAULT_CACHE_CONTROL = "3600";
+const LARGE_FILE_THRESHOLD_BYTES = 50 * 1024 * 1024;
+const RESUMABLE_CHUNK_SIZE_BYTES = 4 * 1024 * 1024;
+
+function getSupabasePublicConfig() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey =
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url || !anonKey) {
+    throw new Error("Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY).");
+  }
+
+  return { url: url.replace(/\/$/, ""), anonKey };
+}
+
+function buildStoragePath(ownerId: string, file: File, prefix = ""): string {
+  const safeName = file.name.replace(/\s+/g, "-").toLowerCase();
+  return `${ownerId}/${prefix}${Date.now()}-${safeName}`;
+}
+
+async function uploadFileResumable(input: {
+  bucket: string;
+  path: string;
+  file: File;
+  cacheControl?: string;
+}) {
+  const supabase = getSupabaseBrowserClient();
+  if (!supabase) {
+    throw new Error("Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY).");
+  }
+
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (!session?.access_token) {
+    throw new Error("Sign in first to upload media.");
+  }
+
+  const { url, anonKey } = getSupabasePublicConfig();
+
+  await new Promise<void>((resolve, reject) => {
+    const upload = new TusUpload(input.file, {
+      endpoint: `${url}/storage/v1/upload/resumable`,
+      retryDelays: [0, 1000, 3000, 5000, 10000],
+      // Keep creation request lightweight to avoid gateway/content-size limits.
+      uploadDataDuringCreation: false,
+      removeFingerprintOnSuccess: true,
+      chunkSize: RESUMABLE_CHUNK_SIZE_BYTES,
+      headers: {
+        authorization: `Bearer ${session.access_token}`,
+        apikey: anonKey,
+        "x-upsert": "false",
+      },
+      metadata: {
+        bucketName: input.bucket,
+        objectName: input.path,
+        contentType: input.file.type || "application/octet-stream",
+        cacheControl: input.cacheControl ?? DEFAULT_CACHE_CONTROL,
+      },
+      onError: (error) => {
+        const message = (error.message || "").toLowerCase();
+        if (message.includes("413") || message.includes("content too large") || message.includes("payload")) {
+          reject(new Error("Upload rejected (413). This usually means your Supabase bucket max file size is below this file. Increase the bucket file size limit in Supabase Storage settings, then retry."));
+          return;
+        }
+
+        reject(new Error(error.message || "Resumable upload failed."));
+      },
+      onSuccess: () => {
+        resolve();
+      },
+    });
+
+    upload.start();
+  });
+}
+
+async function uploadFileToBucket(input: {
+  bucket: string;
+  path: string;
+  file: File;
+  cacheControl?: string;
+}) {
+  const supabase = getSupabaseBrowserClient();
+  if (!supabase) {
+    throw new Error("Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY).");
+  }
+
+  if (input.file.size >= LARGE_FILE_THRESHOLD_BYTES) {
+    await uploadFileResumable(input);
+    return;
+  }
+
+  const { error: uploadError } = await supabase.storage
+    .from(input.bucket)
+    .upload(input.path, input.file, { upsert: false, cacheControl: input.cacheControl ?? DEFAULT_CACHE_CONTROL });
+
+  if (!uploadError) {
+    return;
+  }
+
+  const message = uploadError.message?.toLowerCase() ?? "";
+  const shouldRetryResumable = message.includes("413") || message.includes("payload") || message.includes("too large");
+
+  if (shouldRetryResumable) {
+    await uploadFileResumable(input);
+    return;
+  }
+
+  throw new Error(uploadError.message);
+}
 
 export async function listTemplates(): Promise<StoredTemplateRecord[]> {
   const supabase = getSupabaseBrowserClient();
@@ -74,6 +189,22 @@ export async function saveTemplate(input: {
   return data as StoredTemplateRecord;
 }
 
+export async function deleteTemplate(id: string): Promise<void> {
+  const supabase = getSupabaseBrowserClient();
+  if (!supabase) {
+    throw new Error("Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY).");
+  }
+
+  const { error } = await supabase
+    .from(TABLE)
+    .delete()
+    .eq("id", id);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
 export async function uploadTemplateAsset(input: {
   ownerId: string;
   file: File;
@@ -83,18 +214,70 @@ export async function uploadTemplateAsset(input: {
     throw new Error("Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY).");
   }
 
-  const safeName = input.file.name.replace(/\s+/g, "-").toLowerCase();
-  const path = `${input.ownerId}/${Date.now()}-${safeName}`;
-
-  const { error: uploadError } = await supabase.storage
-    .from("resume-media")
-    .upload(path, input.file, { upsert: false, cacheControl: "3600" });
-
-  if (uploadError) {
-    throw new Error(uploadError.message);
-  }
+  const path = buildStoragePath(input.ownerId, input.file);
+  await uploadFileToBucket({ bucket: "resume-media", path, file: input.file, cacheControl: DEFAULT_CACHE_CONTROL });
 
   const { data } = supabase.storage.from("resume-media").getPublicUrl(path);
+
+  return {
+    path,
+    publicUrl: data.publicUrl,
+  };
+}
+
+export async function uploadHeroImage(input: {
+  ownerId: string;
+  file: File;
+}): Promise<{ path: string; publicUrl: string }> {
+  const supabase = getSupabaseBrowserClient();
+  if (!supabase) {
+    throw new Error("Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY).");
+  }
+
+  const path = buildStoragePath(input.ownerId, input.file);
+  await uploadFileToBucket({ bucket: "resume-hero-images", path, file: input.file, cacheControl: DEFAULT_CACHE_CONTROL });
+
+  const { data } = supabase.storage.from("resume-hero-images").getPublicUrl(path);
+
+  return {
+    path,
+    publicUrl: data.publicUrl,
+  };
+}
+
+export async function uploadBannerVideo(input: {
+  ownerId: string;
+  file: File;
+}): Promise<{ path: string; publicUrl: string }> {
+  const supabase = getSupabaseBrowserClient();
+  if (!supabase) {
+    throw new Error("Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY).");
+  }
+
+  const path = buildStoragePath(input.ownerId, input.file, "banner-");
+  await uploadFileToBucket({ bucket: "resume-hero-images", path, file: input.file, cacheControl: DEFAULT_CACHE_CONTROL });
+
+  const { data } = supabase.storage.from("resume-hero-images").getPublicUrl(path);
+
+  return {
+    path,
+    publicUrl: data.publicUrl,
+  };
+}
+
+export async function uploadSourceDocument(input: {
+  ownerId: string;
+  file: File;
+}): Promise<{ path: string; publicUrl: string }> {
+  const supabase = getSupabaseBrowserClient();
+  if (!supabase) {
+    throw new Error("Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY).");
+  }
+
+  const path = buildStoragePath(input.ownerId, input.file);
+  await uploadFileToBucket({ bucket: "resume-source-docs", path, file: input.file, cacheControl: DEFAULT_CACHE_CONTROL });
+
+  const { data } = supabase.storage.from("resume-source-docs").getPublicUrl(path);
 
   return {
     path,

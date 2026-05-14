@@ -53,6 +53,11 @@ export function AssetViewerModal({ asset, isOpen, accentColor, onClose }: AssetV
             >
               {asset.label}
             </h3>
+            {asset.description ? (
+              <p className="mt-1 text-xs font-light leading-5" style={{ color: "rgba(255,255,255,0.52)" }}>
+                {asset.description}
+              </p>
+            ) : null}
           </div>
           <button
             type="button"
@@ -86,26 +91,25 @@ export function AssetViewerModal({ asset, isOpen, accentColor, onClose }: AssetV
           ) : null}
 
           {asset.type === "doc" ? (
-            <div
-              className="flex min-h-[40vh] flex-col items-center justify-center gap-6 p-10 text-center"
-              style={{ background: "#070709" }}
-            >
-              <p
-                className="max-w-sm text-xs font-light leading-6"
-                style={{ color: "var(--label)" }}
+            asset.href ? (
+              <iframe
+                title={asset.label || "Document preview"}
+                src={`${asset.href}#toolbar=0&navpanes=0&scrollbar=0`}
+                className="h-[72vh] w-full bg-black"
+              />
+            ) : (
+              <div
+                className="flex min-h-[40vh] flex-col items-center justify-center gap-6 p-10 text-center"
+                style={{ background: "#070709" }}
               >
-                This asset is a document. Open it in a new tab to view the full content.
-              </p>
-              <a
-                href={asset.href}
-                target="_blank"
-                rel="noreferrer"
-                className="px-5 py-2.5 text-[10px] uppercase tracking-[0.2em] font-light transition"
-                style={{ color: "#e8e8e8", border: "1px solid var(--border)", borderRadius: "2px" }}
-              >
-                Open document
-              </a>
-            </div>
+                <p
+                  className="max-w-sm text-xs font-light leading-6"
+                  style={{ color: "var(--label)" }}
+                >
+                  This document does not have a source URL yet.
+                </p>
+              </div>
+            )
           ) : null}
         </div>
       </div>

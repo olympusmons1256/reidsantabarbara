@@ -5,6 +5,15 @@ export type TemplateProfile = {
   email: string;
   summary: string;
   heroImage?: string;
+  heroImageFilter?: string;
+  bannerBackgroundVideo?: string;
+  bannerBackgroundImage?: string;
+  bannerVideoOpacity?: number;
+  bannerOverlayOpacity?: number;
+  bannerVideoFilter?: string;
+  bannerVideoUseAudio?: boolean;
+  bannerVideoAudioVolume?: number;
+  bannerVideoDuckedVolume?: number;
   links: Array<{ label: string; href: string }>;
 };
 
@@ -15,28 +24,102 @@ export type TemplateTagDimension = {
   options: string[];
 };
 
+export const TEMPLATE_PROFILE_SCOPE_FIELDS = [
+  "name",
+  "title",
+  "location",
+  "email",
+  "summary",
+  "heroImage",
+  "heroImageFilter",
+  "bannerBackgroundVideo",
+  "bannerBackgroundImage",
+  "links",
+] as const;
+
+export type TemplateProfileScopeField = (typeof TEMPLATE_PROFILE_SCOPE_FIELDS)[number];
+
+export type TemplateAssetType = "image" | "video" | "doc" | "gallery";
+
+export type TemplateAssetAspectRatio = "auto" | "16/9" | "4/3" | "1/1" | "3/4" | "9/16" | "21/9";
+
+export type TemplateAssetFit = "cover" | "contain";
+
+export type TemplateGalleryLayout = "masonry" | "carousel";
+
+export type TemplateGalleryEntryAsset = {
+  id: string;
+  label: string;
+  description?: string;
+  type: Exclude<TemplateAssetType, "gallery">;
+  subType?: "cover" | "supporting";
+  url: string;
+  preview?: string;
+  aspectRatio?: TemplateAssetAspectRatio;
+  fit?: TemplateAssetFit;
+  focusX?: number;
+  focusY?: number;
+  zoom?: number;
+};
+
 export type TemplateAsset = {
   id: string;
   label: string;
-  type: "image" | "video" | "doc";
+  description?: string;
+  type: TemplateAssetType;
+  subType?: "cover" | "supporting";
   url: string;
   preview?: string;
+  aspectRatio?: TemplateAssetAspectRatio;
+  fit?: TemplateAssetFit;
+  focusX?: number;
+  focusY?: number;
+  zoom?: number;
+  galleryLayout?: TemplateGalleryLayout;
+  coverAssetId?: string;
+  assets?: TemplateGalleryEntryAsset[];
+};
+
+export type TemplateFocusMedia = {
+  focusAudio?: string;
+  backgroundVideo?: string;
+  backgroundImage?: string;
+};
+
+export type TemplateCredit = {
+  id: string;
+  role: string;
+  name: string;
+  href?: string;
+  logoUrl?: string;
 };
 
 export type TemplateItem = {
   id: string;
   title: string;
+  dateRange?: string;
   summary: string;
   detail: string;
+  focusMedia?: TemplateFocusMedia;
+  assetLayout?: "list" | "masonry" | "carousel";
+  coverAssetId?: string;
   tags: Record<string, string[]>;
   assets: TemplateAsset[];
+  credits?: TemplateCredit[];
+  type?: "standard" | "innovation" | "group";
+  parentGroupId?: string;
+  sourceContext?: string;
 };
 
 export type TemplateSection = {
   id: string;
   title: string;
   subtitle: string;
+  itemsSubtitle?: string;
+  metadataItemsText?: string;
+  dateRange?: string;
   description: string;
+  focusMedia?: TemplateFocusMedia;
   items: TemplateItem[];
 };
 
@@ -52,6 +135,7 @@ export type TemplateVariant = {
   id: string;
   title: string;
   audience?: string;
+  profileScope?: TemplateProfileScopeField[];
   tagDimensions: TemplateTagDimension[];
   sections: TemplateSection[];
   timelineTour: {

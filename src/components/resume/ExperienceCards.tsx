@@ -4,6 +4,7 @@ import type {
   CompanyExperience,
   ParentGroupFocusTarget,
   Project,
+  ProjectSortFilter,
   ProjectSortMode,
   RoleType,
   FocusMedia,
@@ -20,6 +21,7 @@ type ExperienceCardsProps = {
   timelineTourRunId: number;
   activationFocusMedia: Record<ActivationType, FocusMedia>;
   roleFocusMedia: Record<RoleType, FocusMedia>;
+  sortFilters?: ProjectSortFilter[];
   sortLabels?: {
     activation?: string;
     role?: string;
@@ -40,11 +42,63 @@ export function ExperienceCards({
   timelineTourRunId,
   activationFocusMedia,
   roleFocusMedia,
+  sortFilters,
   sortLabels,
   timelineTourEntryIds,
   timelineTourDurations,
   connectionCounts,
 }: ExperienceCardsProps) {
+  const innovationAccent = "#facc15";
+
+  const parseDateWindow = (value: string | undefined): { start: number; end: number } => {
+    if (!value) {
+      return { start: Number.NEGATIVE_INFINITY, end: Number.NEGATIVE_INFINITY };
+    }
+
+    const normalized = value.toLowerCase();
+    const allYears = value.match(/(?:19|20)\d{2}/g)?.map((match) => Number(match)) ?? [];
+
+    let start = Number.NEGATIVE_INFINITY;
+    let end = Number.NEGATIVE_INFINITY;
+
+    // Prefer explicit range starts (e.g. 2020–Present, 2009 - 2011, c. 2007 to 2008)
+    const rangeStartMatch = value.match(/((?:19|20)\d{2})\s*(?:-|–|—|to|through|thru)/i);
+    if (rangeStartMatch?.[1]) {
+      start = Number(rangeStartMatch[1]);
+    } else if (allYears.length > 0) {
+      start = allYears[0];
+    }
+
+    if (/(present|current|ongoing|now)/i.test(normalized)) {
+      end = Number.MAX_SAFE_INTEGER;
+    } else if (allYears.length >= 2) {
+      end = allYears[allYears.length - 1];
+    } else if (allYears.length === 1) {
+      end = allYears[0];
+    }
+
+    return { start, end };
+  };
+
+  const compareByDateWindowDesc = (left: string | undefined, right: string | undefined): number => {
+    const leftWindow = parseDateWindow(left);
+    const rightWindow = parseDateWindow(right);
+
+    // Primary: closest to present day by ending date
+    const endDelta = rightWindow.end - leftWindow.end;
+    if (endDelta !== 0) {
+      return endDelta;
+    }
+
+    // Secondary: date started (latest first)
+    const startDelta = rightWindow.start - leftWindow.start;
+    if (startDelta !== 0) {
+      return startDelta;
+    }
+
+    return 0;
+  };
+
   const isTimelineMode = sortMode === "timeline";
   const sectionRef = useRef<HTMLElement | null>(null);
 
@@ -63,20 +117,65 @@ export function ExperienceCards({
     [experiences]
   );
 
+  const sortOptions = useMemo<Array<{ label: string; value: ProjectSortMode }>>(() => {
+    const fallback: Array<{ label: string; value: ProjectSortMode }> = [
+      { label: "Company", value: "company" },
+      { label: sortLabels?.activation ?? "Project Type", value: "activation" },
+      { label: sortLabels?.role ?? "Role", value: "role" },
+    ];
+
+    const provided = (sortFilters ?? []).filter((entry) => entry.id !== "timeline");
+    const source = provided.length
+      ? provided.map((entry) => ({ label: entry.label, value: entry.id }))
+      : fallback;
+
+    const seen = new Set<string>();
+    const deduped = source.filter((entry) => {
+      if (seen.has(entry.value)) {
+        return false;
+      }
+      seen.add(entry.value);
+      return true;
+    });
+
+    return deduped.length ? deduped : fallback;
+  }, [sortFilters, sortLabels?.activation, sortLabels?.role]);
+
+  useEffect(() => {
+    if (isTimelineMode) {
+      return;
+    }
+
+    if (!sortOptions.some((option) => option.value === sortMode)) {
+      onSortModeChange("company");
+    }
+  }, [isTimelineMode, onSortModeChange, sortMode, sortOptions]);
+
+  const currentSortLabel = useMemo(() => {
+    return sortOptions.find((option) => option.value === sortMode)?.label ?? "Company";
+  }, [sortMode, sortOptions]);
+
   const groups =
     isTimelineMode
       ? []
       : sortMode === "company"
-      ? experiences.map((company) => ({
+      ? [...experiences]
+          .sort((a, b) => compareByDateWindowDesc(a.period, b.period))
+          .map((company) => ({
           id: company.id,
           title: company.company,
           subtitle: `${company.role} · ${company.period}`,
           description: company.description,
+          itemsSubtitle: company.itemsSubtitle,
+          metadataItems: company.metadataItems,
           focusMedia: company.focusMedia,
-          projects: company.projects.map((project) => ({
-            project,
-            contextLabel: undefined,
-          })),
+          groupContainers: company.groupContainers,
+          projects: [...company.projects]
+            .sort((a, b) => compareByDateWindowDesc(a.dateRange, b.dateRange))
+            .map((project) => ({
+              project,
+              contextLabel: undefined,
+            })),
         }))
       : sortMode === "activation"
         ? Array.from(
@@ -98,13 +197,17 @@ export function ExperienceCards({
             title: activationType[0].toUpperCase() + activationType.slice(1),
             subtitle: `${items.length} project${items.length === 1 ? "" : "s"}`,
             description: "",
+            itemsSubtitle: undefined,
+            metadataItems: undefined,
+            groupContainers: undefined,
             focusMedia: activationFocusMedia[activationType as keyof typeof activationFocusMedia],
             projects: items.map((item) => ({
               project: item.project,
               contextLabel: `${item.companyName} · ${item.companyPeriod}`,
             })),
           }))
-        : Array.from(
+        : sortMode === "role"
+          ? Array.from(
             flattenedProjects.reduce(
               (acc, item) => {
                 for (const roleType of item.project.roleTypes) {
@@ -122,12 +225,47 @@ export function ExperienceCards({
             title: roleType[0].toUpperCase() + roleType.slice(1),
             subtitle: `${items.length} project${items.length === 1 ? "" : "s"}`,
             description: "",
+            itemsSubtitle: undefined,
+            metadataItems: undefined,
+            groupContainers: undefined,
             focusMedia: roleFocusMedia[roleType as keyof typeof roleFocusMedia],
             projects: items.map((item) => ({
               project: item.project,
               contextLabel: `${item.companyName} · ${item.companyPeriod}`,
             })),
-          }));
+            }))
+          : Array.from(
+              flattenedProjects.reduce(
+                (acc, item) => {
+                  const values = item.project.tags?.[sortMode] ?? [];
+                  const effectiveValues = values.length ? values : ["general"];
+
+                  effectiveValues.forEach((value) => {
+                    const key = (value || "").trim() || "general";
+                    if (!acc.has(key)) {
+                      acc.set(key, []);
+                    }
+                    acc.get(key)?.push(item);
+                  });
+
+                  return acc;
+                },
+                new Map<string, typeof flattenedProjects>()
+              )
+            ).map(([filterValue, items]) => ({
+              id: filterValue,
+              title: filterValue[0].toUpperCase() + filterValue.slice(1),
+              subtitle: `${items.length} project${items.length === 1 ? "" : "s"}`,
+              description: "",
+              itemsSubtitle: undefined,
+              metadataItems: undefined,
+              groupContainers: undefined,
+              focusMedia: undefined,
+              projects: items.map((item) => ({
+                project: item.project,
+                contextLabel: `${item.companyName} · ${item.companyPeriod}`,
+              })),
+            }));
 
   const timelineEntries = useMemo(
     () =>
@@ -145,6 +283,7 @@ export function ExperienceCards({
   );
 
   const [hoveredProjectId, setHoveredProjectId] = useState<string | null>(null);
+  const [pressedProjectId, setPressedProjectId] = useState<string | null>(null);
   const [isTourActive, setIsTourActive] = useState(false);
   const [tourStepIndex, setTourStepIndex] = useState<number | null>(null);
   const tourTimersRef = useRef<number[]>([]);
@@ -157,18 +296,11 @@ export function ExperienceCards({
 
   const activeTourEntry = tourStepIndex !== null ? timelineEntries[tourStepIndex] : null;
 
-  const sortOptions: Array<{ label: string; value: ProjectSortMode }> = [
-    { label: "Company", value: "company" },
-    { label: sortLabels?.activation ?? "Activation Type", value: "activation" },
-    { label: sortLabels?.role ?? "Role Type", value: "role" },
-  ];
-
-  const experienceHeadingByMode: Record<ProjectSortMode, string> = {
-    company: "By Company",
-    activation: `By ${sortLabels?.activation ?? "Activation Type"}`,
-    role: `By ${sortLabels?.role ?? "Role"}`,
-    timeline: "Project Timeline",
-  };
+  const experienceHeading = isTimelineMode
+    ? "Project Timeline"
+    : sortMode === "company"
+      ? "By Company"
+      : `By ${currentSortLabel}`;
 
   useEffect(() => {
     if (!isTimelineMode || timelineTourRunId === 0 || !sectionRef.current) {
@@ -260,7 +392,7 @@ export function ExperienceCards({
             className="mt-2 text-2xl font-light tracking-tight"
             style={{ color: "#f0f0f0", letterSpacing: "-0.01em" }}
           >
-            {experienceHeadingByMode[sortMode]}
+            {experienceHeading}
           </h2>
         </div>
 
@@ -360,6 +492,8 @@ export function ExperienceCards({
             {timelineEntries.map((entry) => {
               const isActive = selectedProjectId === entry.project.id;
               const isHovered = hoveredProjectId === entry.id;
+              const isPressed = pressedProjectId === entry.id;
+              const isInnovation = entry.project.type === "innovation";
               const connectionCount = connectionCounts?.[entry.project.id] ?? 0;
 
               return (
@@ -379,6 +513,8 @@ export function ExperienceCards({
                     data-timeline-stop="true"
                     data-timeline-entry-id={entry.id}
                     onClick={() => onSelectProject(entry.project)}
+                    onMouseDown={() => setPressedProjectId(entry.id)}
+                    onMouseUp={() => setPressedProjectId(null)}
                     onFocus={() => {
                       onFocusProject(entry.project);
                       onFocusParentGroup({
@@ -401,21 +537,23 @@ export function ExperienceCards({
                       onFocusProject(null);
                       onFocusParentGroup(null);
                       setHoveredProjectId(null);
+                      setPressedProjectId(null);
                     }}
                     onMouseLeave={() => {
                       onFocusProject(null);
                       onFocusParentGroup(null);
                       setHoveredProjectId(null);
+                      setPressedProjectId(null);
                     }}
-                    className="w-full text-left transition"
+                    className="w-full cursor-pointer text-left transition"
                     style={{
-                      background: isActive || isHovered ? "rgba(255,255,255,0.06)" : "var(--background)",
+                      background: isActive || isHovered || isPressed ? "rgba(255,255,255,0.06)" : "var(--background)",
                       border: "1px solid var(--border)",
                       borderRadius: "2px",
                       boxShadow:
                         isActive
                           ? `inset 0 0 0 1px ${entry.project.theme.accent}88`
-                          : isHovered
+                          : isHovered || isPressed
                             ? `inset 0 0 0 1px ${entry.project.theme.accent}44`
                             : "none",
                     }}
@@ -427,9 +565,19 @@ export function ExperienceCards({
                       >
                         {entry.order}. {entry.companyPeriod} · {entry.companyName}
                       </p>
-                      <h3 className="mt-2 text-sm font-light" style={{ color: isActive ? "#f0f0f0" : "#d4d4d8" }}>
+                      <div className="mt-2 flex items-center gap-2">
+                        {entry.project.type === "innovation" && (
+                          <div className="shrink-0 h-1.5 w-1.5 rounded-full" style={{ backgroundColor: innovationAccent }} title={entry.project.sourceContext || "Innovation"} />
+                        )}
+                        <h3 className="text-sm font-light" style={{ color: isActive ? "#f0f0f0" : "#d4d4d8" }}>
                         {entry.project.title}
                       </h3>
+                      </div>
+                      {entry.project.dateRange ? (
+                        <p className="mt-1 text-[11px] font-light" style={{ color: "rgba(255,255,255,0.45)" }}>
+                          {entry.project.dateRange}
+                        </p>
+                      ) : null}
                       <p className="mt-1 text-[11px] font-light" style={{ color: "rgba(255,255,255,0.35)" }}>
                         {entry.companyRole}
                       </p>
@@ -439,6 +587,29 @@ export function ExperienceCards({
                       >
                         {entry.project.summary}
                       </p>
+
+                      {(entry.project.credits ?? []).length > 0 && (
+                        <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1.5">
+                          {(entry.project.credits ?? []).map((credit) => (
+                            <span key={credit.id} className="flex items-center gap-1.5">
+                              {credit.logoUrl ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={credit.logoUrl} alt="" className="h-3.5 w-3.5 rounded-sm object-contain opacity-60" />
+                              ) : null}
+                              <span className="text-[10px] font-light uppercase tracking-[0.14em]" style={{ color: "rgba(255,255,255,0.3)" }}>
+                                {credit.role ? `${credit.role}: ` : ""}
+                              </span>
+                              {credit.href ? (
+                                <a href={credit.href} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-[10px] font-light" style={{ color: "rgba(255,255,255,0.5)", textDecorationLine: "underline", textUnderlineOffset: "2px" }}>
+                                  {credit.name}
+                                </a>
+                              ) : (
+                                <span className="text-[10px] font-light" style={{ color: "rgba(255,255,255,0.5)" }}>{credit.name}</span>
+                              )}
+                            </span>
+                          ))}
+                        </div>
+                      )}
 
                       {connectionCount > 0 ? (
                         <p className="mt-3 text-[10px] uppercase tracking-[0.18em] font-light" style={{ color: entry.project.theme.accent }}>
@@ -535,30 +706,41 @@ export function ExperienceCards({
                 ) : null}
               </header>
 
-              <ul className="grid gap-px p-px md:grid-cols-2" style={{ background: "var(--border)" }}>
-                {group.projects.map(({ project, contextLabel }) => {
+              {(() => {
+                const renderProjectTile = (
+                  project: Project,
+                  contextLabel: string | undefined,
+                  keyPrefix: string,
+                  stretchToFill = false,
+                ) => {
                   const isActive = selectedProjectId === project.id;
+                  const projectInteractionId = `${group.id}::${project.id}`;
+                  const isHovered = hoveredProjectId === projectInteractionId;
+                  const isPressed = pressedProjectId === projectInteractionId;
+                  const isInnovation = project.type === "innovation";
                   const connectionCount = connectionCounts?.[project.id] ?? 0;
 
                   return (
-                    <li key={project.id}>
+                    <li key={`${keyPrefix}-${project.id}`} className={stretchToFill ? "flex-1" : undefined}>
                       <button
                         type="button"
                         onClick={() => onSelectProject(project)}
-                        onFocus={() => { onFocusProject(project); setHoveredProjectId(`${group.id}::${project.id}`); }}
-                        onMouseEnter={() => { onFocusProject(project); setHoveredProjectId(`${group.id}::${project.id}`); }}
-                        onBlur={() => { onFocusProject(null); setHoveredProjectId(null); }}
-                        onMouseLeave={() => { onFocusProject(null); setHoveredProjectId(null); }}
-                        className="w-full p-6 text-left transition"
+                        onMouseDown={() => setPressedProjectId(projectInteractionId)}
+                        onMouseUp={() => setPressedProjectId(null)}
+                        onFocus={() => { onFocusProject(project); setHoveredProjectId(projectInteractionId); }}
+                        onMouseEnter={() => { onFocusProject(project); setHoveredProjectId(projectInteractionId); }}
+                        onBlur={() => { onFocusProject(null); setHoveredProjectId(null); setPressedProjectId(null); }}
+                        onMouseLeave={() => { onFocusProject(null); setHoveredProjectId(null); setPressedProjectId(null); }}
+                        className={`flex w-full cursor-pointer flex-col p-6 text-left transition ${stretchToFill ? "h-full" : ""}`}
                         style={{
                           background:
-                            isActive || hoveredProjectId === `${group.id}::${project.id}`
+                            isActive || isHovered || isPressed
                               ? "rgba(255,255,255,0.06)"
                               : "var(--background)",
                           boxShadow:
                             isActive
                               ? `inset 0 0 0 1px ${project.theme.accent}88`
-                              : hoveredProjectId === `${group.id}::${project.id}`
+                              : isHovered || isPressed
                                 ? `inset 0 0 0 1px ${project.theme.accent}44`
                                 : "none",
                         }}
@@ -571,12 +753,22 @@ export function ExperienceCards({
                             {contextLabel}
                           </p>
                         ) : null}
-                        <h4
-                          className="text-sm font-light"
-                          style={{ color: isActive ? "#f0f0f0" : "#d4d4d8" }}
-                        >
-                          {project.title}
-                        </h4>
+                        <div className="flex items-center gap-2">
+                          {project.type === "innovation" && (
+                            <div className="shrink-0 h-1.5 w-1.5 rounded-full" style={{ backgroundColor: innovationAccent }} title={project.sourceContext || "Innovation"} />
+                          )}
+                          <h4
+                            className="text-sm font-light"
+                            style={{ color: isActive ? "#f0f0f0" : "#d4d4d8" }}
+                          >
+                            {project.title}
+                          </h4>
+                        </div>
+                        {project.dateRange ? (
+                          <p className="mt-1 text-[11px] font-light" style={{ color: "rgba(255,255,255,0.45)" }}>
+                            {project.dateRange}
+                          </p>
+                        ) : null}
                         <p
                           className="mt-2.5 text-xs font-light leading-5"
                           style={{ color: "rgba(255,255,255,0.35)" }}
@@ -584,13 +776,36 @@ export function ExperienceCards({
                           {project.summary}
                         </p>
 
+                        {(project.credits ?? []).length > 0 && (
+                          <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1.5">
+                            {(project.credits ?? []).map((credit) => (
+                              <span key={credit.id} className="flex items-center gap-1.5">
+                                {credit.logoUrl ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img src={credit.logoUrl} alt="" className="h-3.5 w-3.5 rounded-sm object-contain opacity-60" />
+                                ) : null}
+                                <span className="text-[10px] font-light uppercase tracking-[0.14em]" style={{ color: "rgba(255,255,255,0.3)" }}>
+                                  {credit.role ? `${credit.role}: ` : ""}
+                                </span>
+                                {credit.href ? (
+                                  <a href={credit.href} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-[10px] font-light" style={{ color: "rgba(255,255,255,0.5)", textDecorationLine: "underline", textUnderlineOffset: "2px" }}>
+                                    {credit.name}
+                                  </a>
+                                ) : (
+                                  <span className="text-[10px] font-light" style={{ color: "rgba(255,255,255,0.5)" }}>{credit.name}</span>
+                                )}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
                         {connectionCount > 0 ? (
                           <p className="mt-3 text-[10px] uppercase tracking-[0.18em] font-light" style={{ color: project.theme.accent }}>
                             Connected to {connectionCount} other resume {connectionCount === 1 ? "path" : "paths"}
                           </p>
                         ) : null}
 
-                        <div className="mt-4 flex flex-wrap gap-1.5">
+                        <div className="mt-auto pt-4 flex flex-wrap gap-1.5">
                           <span
                             className="px-2 py-0.5 text-[9px] uppercase tracking-[0.18em] font-light"
                             style={{
@@ -618,8 +833,174 @@ export function ExperienceCards({
                       </button>
                     </li>
                   );
-                })}
-              </ul>
+                };
+
+                const renderProjectGrid = (
+                  projects: Array<{ project: Project; contextLabel: string | undefined }>,
+                  keyPrefix: string,
+                ) => {
+                  const leftColumnProjects = projects.filter((_, index) => index % 2 === 0);
+                  const rightColumnProjects = projects.filter((_, index) => index % 2 === 1);
+
+                  return (
+                    <>
+                      <ul className="space-y-px p-px md:hidden" style={{ background: "var(--border)" }}>
+                        {projects.map(({ project, contextLabel }) => renderProjectTile(project, contextLabel, `${keyPrefix}-mobile`))}
+                      </ul>
+
+                      <div className="hidden grid-cols-2 gap-px p-px md:grid" style={{ background: "var(--border)" }}>
+                        <ul className="flex flex-col gap-px">
+                          {leftColumnProjects.map(({ project, contextLabel }, index) => {
+                            const isLastLeftColumnCard = index === leftColumnProjects.length - 1;
+                            return renderProjectTile(project, contextLabel, `${keyPrefix}-left`, isLastLeftColumnCard);
+                          })}
+                        </ul>
+                        <ul className="flex flex-col gap-px">
+                          {rightColumnProjects.map(({ project, contextLabel }, index) => {
+                            const isLastRightColumnCard = index === rightColumnProjects.length - 1;
+                            return renderProjectTile(project, contextLabel, `${keyPrefix}-right`, isLastRightColumnCard);
+                          })}
+                        </ul>
+                      </div>
+                    </>
+                  );
+                };
+
+                const subgroupById = new Map<
+                  string,
+                  {
+                    id: string;
+                    title: string;
+                    dateRange?: string;
+                    summary?: string;
+                    projects: Array<{ project: Project; contextLabel: string | undefined }>;
+                  }
+                >();
+                const innovationProjects = group.projects.filter((entry) => entry.project.type === "innovation");
+                const standardProjects = group.projects.filter((entry) => entry.project.type !== "innovation");
+                const ungroupedProjects: Array<{ project: Project; contextLabel: string | undefined }> = [];
+
+                (group.groupContainers ?? []).forEach((container) => {
+                  const groupKey = container.id?.trim() || `title:${container.title.toLowerCase()}`;
+                  if (!groupKey || subgroupById.has(groupKey)) {
+                    return;
+                  }
+
+                  subgroupById.set(groupKey, {
+                    id: groupKey,
+                    title: container.title || "Subsection",
+                    dateRange: container.dateRange,
+                    summary: container.summary,
+                    projects: [],
+                  });
+                });
+
+                standardProjects.forEach((entry) => {
+                  const subgroupId = entry.project.parentGroupId?.trim();
+                  const subgroupTitle = entry.project.parentGroupTitle?.trim();
+                  const groupKey = subgroupId || (subgroupTitle ? `title:${subgroupTitle.toLowerCase()}` : "");
+
+                  if (!groupKey) {
+                    ungroupedProjects.push(entry);
+                    return;
+                  }
+
+                  if (!subgroupById.has(groupKey)) {
+                    subgroupById.set(groupKey, {
+                      id: groupKey,
+                      title: subgroupTitle || "Subsection",
+                      dateRange: entry.project.parentGroupDateRange,
+                      summary: entry.project.parentGroupSummary,
+                      projects: [],
+                    });
+                  }
+
+                  subgroupById.get(groupKey)?.projects.push(entry);
+                });
+
+                const subgroups = Array.from(subgroupById.values()).sort((left, right) => {
+                  const leftSortDate = left.dateRange || left.projects[0]?.project.dateRange;
+                  const rightSortDate = right.dateRange || right.projects[0]?.project.dateRange;
+                  return compareByDateWindowDesc(leftSortDate, rightSortDate);
+                });
+                const hasNestedProjectGroups = subgroups.length > 0;
+
+                return (
+                  <>
+                    {innovationProjects.length ? (
+                      <section>
+                        <div className="px-7 py-3" style={{ borderBottom: "1px solid var(--border)", background: "rgba(255,255,255,0.02)" }}>
+                          <p className="text-[10px] uppercase tracking-[0.22em] font-light" style={{ color: "var(--label)" }}>
+                            Innovation
+                          </p>
+                        </div>
+                        {renderProjectGrid(innovationProjects, `${group.id}-innovation`)}
+                      </section>
+                    ) : null}
+
+                    {group.itemsSubtitle && (ungroupedProjects.length > 0 || subgroups.length > 0) ? (
+                      <div className="px-7 py-3" style={{ borderBottom: "1px solid var(--border)", background: "rgba(255,255,255,0.02)" }}>
+                        <p className="text-[10px] uppercase tracking-[0.22em] font-light" style={{ color: "var(--label)" }}>
+                          Select works
+                        </p>
+                      </div>
+                    ) : null}
+
+                    {!hasNestedProjectGroups && standardProjects.length > 0 ? renderProjectGrid(standardProjects, group.id) : null}
+
+                    {hasNestedProjectGroups ? (
+                      <div style={{ borderTop: "1px solid var(--border)" }}>
+                        {ungroupedProjects.length ? (
+                          <section>
+                            {renderProjectGrid(ungroupedProjects, `${group.id}-ungrouped`)}
+                          </section>
+                        ) : null}
+
+                        {subgroups.map((subgroup) => (
+                          <section key={`${group.id}-${subgroup.id}`} style={{ borderTop: "1px solid var(--border)" }}>
+                            <header className="px-7 py-4" style={{ background: "rgba(255,255,255,0.02)" }}>
+                              <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
+                                <h4 className="text-xs uppercase tracking-[0.18em] font-light" style={{ color: "rgba(255,255,255,0.72)" }}>
+                                  {subgroup.title}
+                                </h4>
+                                {subgroup.dateRange ? (
+                                  <p className="text-[10px] uppercase tracking-[0.18em] font-light" style={{ color: "var(--label)" }}>
+                                    {subgroup.dateRange}
+                                  </p>
+                                ) : null}
+                              </div>
+                              {subgroup.summary ? (
+                                <p className="mt-1.5 text-xs font-light leading-5" style={{ color: "rgba(255,255,255,0.34)" }}>
+                                  {subgroup.summary}
+                                </p>
+                              ) : null}
+                            </header>
+                            {renderProjectGrid(subgroup.projects, `${group.id}-${subgroup.id}`)}
+                          </section>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    {group.metadataItems?.length ? (
+                      <footer className="px-7 py-4" style={{ borderTop: "1px solid var(--border)", background: "rgba(255,255,255,0.02)" }}>
+                        <p className="text-[10px] uppercase tracking-[0.22em] font-light" style={{ color: "var(--label)" }}>
+                          Credits
+                        </p>
+                        <p className="mt-1 text-[11px] font-light" style={{ color: "rgba(255,255,255,0.36)" }}>
+                          Additional work completed during this section.
+                        </p>
+                        <ul className="mt-3 space-y-1.5">
+                          {group.metadataItems.map((line, index) => (
+                            <li key={`${group.id}-meta-${index}`} className="text-xs font-light leading-5" style={{ color: "rgba(255,255,255,0.45)" }}>
+                              {line}
+                            </li>
+                          ))}
+                        </ul>
+                      </footer>
+                    ) : null}
+                  </>
+                );
+              })()}
             </article>
           ))}
         </div>

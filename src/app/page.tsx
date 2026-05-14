@@ -1,17 +1,10 @@
-import { createClient } from "@/utils/supabase/server";
-import { cookies } from "next/headers";
+import { Suspense } from "react";
+import { ResumeWireframe } from "@/components/resume/ResumeWireframe";
 
-export default async function Page() {
-  const cookieStore = await cookies();
-  const supabase = createClient(cookieStore);
-
-  const { data: todos } = await supabase.from("todos").select();
-
+export default function Home() {
   return (
-    <ul>
-      {todos?.map((todo) => (
-        <li key={todo.id}>{todo.name}</li>
-      ))}
-    </ul>
+    <Suspense fallback={null}>
+      <ResumeWireframe />
+    </Suspense>
   );
 }
