@@ -36,7 +36,7 @@ type TimelineTourStop = {
   element: HTMLElement;
   entryId: string;
   durationKey: string;
-  stepLabel?: string;
+  stepLabel: string | undefined;
 };
 
 export function ExperienceCards({
@@ -470,6 +470,7 @@ export function ExperienceCards({
             element: stop,
             entryId,
             durationKey: entryId,
+            stepLabel: undefined,
           } satisfies TimelineTourStop;
         });
 
