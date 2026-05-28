@@ -377,7 +377,7 @@ export function ExperienceCards({
   const [pressedProjectId, setPressedProjectId] = useState<string | null>(null);
   const [isTourActive, setIsTourActive] = useState(false);
   const [tourStepIndex, setTourStepIndex] = useState<number | null>(null);
-  const tourTimersRef = useRef<number[]>([]);
+  const [tourStops, setTourStops] = useState<HTMLElement[]>([]);
   const tourSessionRef = useRef(0);
   const handlersRef = useRef({ onSelectProject, onFocusProject, onFocusParentGroup });
 
@@ -402,8 +402,6 @@ export function ExperienceCards({
 
     tourSessionRef.current += 1;
     const sessionId = tourSessionRef.current;
-    tourTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
-    tourTimersRef.current = [];
 
     const stops = Array.from(sectionRef.current.querySelectorAll<HTMLElement>("[data-timeline-stop='true']"));
     if (!stops.length) {
@@ -429,9 +427,6 @@ export function ExperienceCards({
           return { stop: exact, durationKey: configuredEntryId };
         }
 
-        // Config stores sectionId::itemId while rendered timeline rows are keyed as
-        // companyId::itemId. Fall back to itemId matching so configured tour order
-        // and durations are honored.
         const configuredItemId = configuredEntryId.split("::").pop() ?? "";
         if (!configuredItemId) {
           return null;
@@ -445,65 +440,85 @@ export function ExperienceCards({
     const effectiveStops = orderedStopsWithDurationKey.length
       ? orderedStopsWithDurationKey.map((entry) => entry.stop)
       : stops;
-    const effectiveDurationKeys = orderedStopsWithDurationKey.length
-      ? orderedStopsWithDurationKey.map((entry) => entry.durationKey)
-      : effectiveStops.map((stop) => stop.dataset.timelineEntryId ?? "");
 
-    const runStep = (index: number) => {
-      if (sessionId !== tourSessionRef.current || index >= effectiveStops.length) {
-        handlersRef.current.onFocusProject(null);
-        handlersRef.current.onFocusParentGroup(null);
-        setHoveredProjectId(null);
-        setTourStepIndex(null);
-        setIsTourActive(false);
-        return;
-      }
-
-      const stop = effectiveStops[index];
-      const entryId = stop.dataset.timelineEntryId;
-      const entry = timelineEntries.find((item) => item.id === entryId);
-
-      if (entry) {
-        setTourStepIndex(index);
-        handlersRef.current.onSelectProject(entry.project);
-        handlersRef.current.onFocusProject(entry.project);
-        handlersRef.current.onFocusParentGroup({
-          id: entry.companyId,
-          label: entry.companyName,
-          media: entry.companyFocusMedia,
-        });
-        setHoveredProjectId(entry.id);
-      }
-
-      stop.scrollIntoView({ behavior: "smooth", block: "center" });
-      const configuredDurationKey = effectiveDurationKeys[index];
-      const duration =
-        (configuredDurationKey && timelineTourDurations?.[configuredDurationKey]) ||
-        (entryId && timelineTourDurations?.[entryId]) ||
-        1900;
-      const nextTimerId = window.setTimeout(() => runStep(index + 1), duration);
-      tourTimersRef.current.push(nextTimerId);
-    };
-
-    const startTimerId = window.setTimeout(() => {
-      if (sessionId !== tourSessionRef.current) {
-        return;
-      }
-
-      setIsTourActive(true);
-      setTourStepIndex(null);
-      runStep(0);
-    }, 450);
-    tourTimersRef.current.push(startTimerId);
-
-    return () => {
-      if (sessionId === tourSessionRef.current) {
-        tourSessionRef.current += 1;
-      }
-      tourTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
-      tourTimersRef.current = [];
-    };
+    setTourStops(effectiveStops);
+    setIsTourActive(true);
+    setTourStepIndex(0);
   }, [isTimelineMode, timelineEntries, timelineTourRunId, timelineTourEntryIds, timelineTourDurations]);
+
+  const handleTourNext = () => {
+    if (tourStepIndex === null || tourStepIndex >= tourStops.length - 1) {
+      return;
+    }
+
+    const nextIndex = tourStepIndex + 1;
+    const stop = tourStops[nextIndex];
+    const entryId = stop.dataset.timelineEntryId;
+    const entry = timelineEntries.find((item) => item.id === entryId);
+
+    if (entry) {
+      setTourStepIndex(nextIndex);
+      handlersRef.current.onSelectProject(entry.project);
+      handlersRef.current.onFocusProject(entry.project);
+      handlersRef.current.onFocusParentGroup({
+        id: entry.companyId,
+        label: entry.companyName,
+        media: entry.companyFocusMedia,
+      });
+      setHoveredProjectId(entry.id);
+    }
+
+    stop.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+
+  const handleTourPrev = () => {
+    if (tourStepIndex === null || tourStepIndex <= 0) {
+      return;
+    }
+
+    const prevIndex = tourStepIndex - 1;
+    const stop = tourStops[prevIndex];
+    const entryId = stop.dataset.timelineEntryId;
+    const entry = timelineEntries.find((item) => item.id === entryId);
+
+    if (entry) {
+      setTourStepIndex(prevIndex);
+      handlersRef.current.onSelectProject(entry.project);
+      handlersRef.current.onFocusProject(entry.project);
+      handlersRef.current.onFocusParentGroup({
+        id: entry.companyId,
+        label: entry.companyName,
+        media: entry.companyFocusMedia,
+      });
+      setHoveredProjectId(entry.id);
+    }
+
+    stop.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+
+  const handleTourReset = () => {
+    if (!isTourActive || tourStops.length === 0) {
+      return;
+    }
+
+    const stop = tourStops[0];
+    const entryId = stop.dataset.timelineEntryId;
+    const entry = timelineEntries.find((item) => item.id === entryId);
+
+    if (entry) {
+      setTourStepIndex(0);
+      handlersRef.current.onSelectProject(entry.project);
+      handlersRef.current.onFocusProject(entry.project);
+      handlersRef.current.onFocusParentGroup({
+        id: entry.companyId,
+        label: entry.companyName,
+        media: entry.companyFocusMedia,
+      });
+      setHoveredProjectId(entry.id);
+    }
+
+    stop.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
 
   return (
     <section ref={sectionRef} className="mx-auto mt-8 w-full max-w-6xl px-4 pb-12 sm:mt-10 sm:px-8 sm:pb-16 md:mt-12 md:px-12">
@@ -576,25 +591,51 @@ export function ExperienceCards({
                   {activeTourEntry ? activeTourEntry.project.title : ""}
                 </p>
               </div>
-              <div className="flex items-center justify-between px-4 py-2.5">
-                <div className="h-1.5 w-40 overflow-hidden" style={{ background: "rgba(255,255,255,0.08)", borderRadius: "999px" }}>
+              <div className="flex items-center justify-between gap-2 px-4 py-2.5">
+                <div className="h-1.5 flex-1 overflow-hidden" style={{ background: "rgba(255,255,255,0.08)", borderRadius: "999px" }}>
                   <div
                     className="h-full"
                     style={{
-                      width: `${timelineEntries.length ? (((tourStepIndex ?? -1) + 1) / timelineEntries.length) * 100 : 0}%`,
+                      width: `${tourStops.length ? (((tourStepIndex ?? -1) + 1) / tourStops.length) * 100 : 0}%`,
                       background: "linear-gradient(90deg, rgba(250,204,21,0.45), rgba(250,204,21,0.9))",
                       transition: "width 350ms ease",
                     }}
                   />
                 </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={handleTourPrev}
+                    disabled={tourStepIndex === null || tourStepIndex === 0}
+                    className="px-2 py-1 text-[10px] uppercase tracking-[0.2em] font-light transition disabled:opacity-40"
+                    style={{
+                      color: "var(--label)",
+                      border: "1px solid var(--border)",
+                      borderRadius: "2px",
+                    }}
+                  >
+                    ← Prev
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleTourNext}
+                    disabled={tourStepIndex === null || tourStepIndex >= tourStops.length - 1}
+                    className="px-2 py-1 text-[10px] uppercase tracking-[0.2em] font-light transition disabled:opacity-40"
+                    style={{
+                      color: "var(--label)",
+                      border: "1px solid var(--border)",
+                      borderRadius: "2px",
+                    }}
+                  >
+                    Next →
+                  </button>
+                </div>
                 <button
                   type="button"
                   onClick={() => {
-                    tourSessionRef.current += 1;
-                    tourTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
-                    tourTimersRef.current = [];
                     setIsTourActive(false);
                     setTourStepIndex(null);
+                    setTourStops([]);
                     handlersRef.current.onFocusProject(null);
                     handlersRef.current.onFocusParentGroup(null);
                     setHoveredProjectId(null);

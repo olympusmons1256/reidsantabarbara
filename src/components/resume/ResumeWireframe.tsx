@@ -359,21 +359,21 @@ export function ResumeWireframe() {
     const bio = runtimeData.bio;
     const pdfTitle = `${(bio.name || "Resume").replace(/\s+/g, "-")}.pdf`;
 
-    // Build export groups from company sections, each with optional subgroup names
-    const exportSections = [...activeExperiences]
-      .sort((a, b) => compareByDateWindowDesc(a.period, b.period))
-      .map((company) => {
-        // Collect unique subgroup names
+    // Use the same sort/grouping logic as the display
+    const exportGroups = getExportGroups();
+
+    // Build export sections from the sorted groups
+    const exportSections = exportGroups.map((group) => {
+      const company = {
+        company: group.title,
+        role: group.subtitle?.split(" · ")[0] || "",
+        period: group.subtitle?.split(" · ")[1] || "",
+        projects: group.projects,
+      };
+      // Collect unique subgroup names
         const subgroupNames: string[] = [];
         const seen = new Set<string>();
-        (company.groupContainers ?? []).forEach((container) => {
-          const name = (container.title || "").trim();
-          if (name && !seen.has(name)) {
-            seen.add(name);
-            subgroupNames.push(name);
-          }
-        });
-        company.projects.forEach((project) => {
+        (company.projects || []).forEach((project) => {
           const name = (project.parentGroupTitle || "").trim();
           if (name && !seen.has(name)) {
             seen.add(name);
@@ -385,7 +385,7 @@ export function ResumeWireframe() {
           ? subgroupNames.map((name) => `<p class="subgroup">${escapeHtml(name)}</p>`).join("")
           : "";
 
-        const innovationProjects = company.projects.filter((p) => p.type === "innovation");
+        const innovationProjects = (company.projects || []).filter((p) => p.type === "innovation");
         const innovationMarkup = innovationProjects.length
           ? `<div class="innovations"><p class="innovations-label">Innovation</p>${innovationProjects.map((p) => `
               <article class="project">
@@ -401,9 +401,8 @@ export function ResumeWireframe() {
           <section class="group">
             <header>
               <h3>${escapeHtml(company.company)}</h3>
-              <p>${escapeHtml([company.role, company.period].filter(Boolean).join(" · "))}</p>
+              <p>${escapeHtml(company.period)}</p>
             </header>
-            ${company.description ? `<p class="summary">${escapeHtml(company.description)}</p>` : ""}
             ${subgroupMarkup}
             ${innovationMarkup}
           </section>
