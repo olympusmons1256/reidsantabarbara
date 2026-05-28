@@ -234,11 +234,16 @@ function normalizeFit(value: string | undefined): TemplateAsset["fit"] {
 }
 
 function ensureGalleryChildAsset(asset: Partial<TemplateGalleryEntryAsset>, assetIndex: number): TemplateGalleryEntryAsset {
+  const rawType = String(asset.type ?? "").toLowerCase();
   return {
     id: asset.id || `gallery-asset-${assetIndex + 1}`,
     label: asset.label || `Gallery Asset ${assetIndex + 1}`,
     description: asset.description || "",
-    type: asset.type === "video" || asset.type === "doc" ? asset.type : "image",
+    type: asset.type === "video" || asset.type === "doc" || asset.type === "iframe"
+      ? asset.type
+      : rawType === "embed" || rawType === "matterport"
+        ? "iframe"
+        : "image",
     subType: asset.subType === "cover" ? "cover" : "supporting",
     url: asset.url || "",
     preview: asset.preview || "",
@@ -258,7 +263,7 @@ function ensureAssetList(assets: Array<Partial<TemplateAsset>> | undefined, inde
   if (legacyGalleryAsset) {
     const galleryChildren = sourceAssets
       .filter((asset) => asset !== legacyGalleryAsset && String(asset.type ?? "") !== "masonry")
-      .map((asset, assetIndex) => ensureGalleryChildAsset({ ...asset, type: asset.type === "video" || asset.type === "doc" ? asset.type : "image" }, assetIndex));
+      .map((asset, assetIndex) => ensureGalleryChildAsset({ ...asset, type: asset.type === "video" || asset.type === "doc" || asset.type === "iframe" ? asset.type : "image" }, assetIndex));
 
     return [{
       id: legacyGalleryAsset.id || `asset-${index + 1}-gallery`,
@@ -283,7 +288,14 @@ function ensureAssetList(assets: Array<Partial<TemplateAsset>> | undefined, inde
   }
 
   return sourceAssets.map((asset, assetIndex) => {
-    const type = asset.type === "gallery" ? "gallery" : asset.type === "video" || asset.type === "doc" ? asset.type : "image";
+    const rawType = String(asset.type ?? "").toLowerCase();
+    const type = asset.type === "gallery"
+      ? "gallery"
+      : asset.type === "video" || asset.type === "doc" || asset.type === "iframe"
+        ? asset.type
+        : rawType === "embed" || rawType === "matterport"
+          ? "iframe"
+          : "image";
     const galleryChildren = (asset.assets ?? []).map((childAsset, childIndex) => ensureGalleryChildAsset(childAsset, childIndex));
 
     return {

@@ -21,7 +21,14 @@ function getSupabasePublicConfig() {
 }
 
 function buildStoragePath(ownerId: string, file: File, prefix = ""): string {
-  const safeName = file.name.replace(/\s+/g, "-").toLowerCase();
+  const safeName = file.name
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 180) || "upload.bin";
   return `${ownerId}/${prefix}${Date.now()}-${safeName}`;
 }
 
@@ -126,7 +133,7 @@ export async function listTemplates(): Promise<StoredTemplateRecord[]> {
 
   const { data, error } = await supabase
     .from(TABLE)
-    .select("id, owner_id, title, data, created_at, updated_at")
+    .select("id, owner_id, title, data, is_published, published_at, created_at, updated_at")
     .order("updated_at", { ascending: false });
 
   if (error) {
@@ -144,7 +151,7 @@ export async function getTemplateById(id: string): Promise<StoredTemplateRecord 
 
   const { data, error } = await supabase
     .from(TABLE)
-    .select("id, owner_id, title, data, created_at, updated_at")
+    .select("id, owner_id, title, data, is_published, published_at, created_at, updated_at")
     .eq("id", id)
     .maybeSingle();
 
@@ -179,7 +186,7 @@ export async function saveTemplate(input: {
   const { data, error } = await supabase
     .from(TABLE)
     .upsert(payload, { onConflict: "id" })
-    .select("id, owner_id, title, data, created_at, updated_at")
+    .select("id, owner_id, title, data, is_published, published_at, created_at, updated_at")
     .single();
 
   if (error) {
@@ -203,6 +210,32 @@ export async function deleteTemplate(id: string): Promise<void> {
   if (error) {
     throw new Error(error.message);
   }
+}
+
+export async function setTemplatePublishState(input: {
+  id: string;
+  isPublished: boolean;
+}): Promise<StoredTemplateRecord> {
+  const supabase = getSupabaseBrowserClient();
+  if (!supabase) {
+    throw new Error("Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY).");
+  }
+
+  const { data, error } = await supabase
+    .from(TABLE)
+    .update({
+      is_published: input.isPublished,
+      published_at: input.isPublished ? new Date().toISOString() : null,
+    })
+    .eq("id", input.id)
+    .select("id, owner_id, title, data, is_published, published_at, created_at, updated_at")
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as StoredTemplateRecord;
 }
 
 export async function uploadTemplateAsset(input: {

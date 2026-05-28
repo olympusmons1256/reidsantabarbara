@@ -39,7 +39,7 @@ export const TEMPLATE_PROFILE_SCOPE_FIELDS = [
 
 export type TemplateProfileScopeField = (typeof TEMPLATE_PROFILE_SCOPE_FIELDS)[number];
 
-export type TemplateAssetType = "image" | "video" | "doc" | "gallery";
+export type TemplateAssetType = "image" | "video" | "doc" | "iframe" | "gallery";
 
 export type TemplateAssetAspectRatio = "auto" | "16/9" | "4/3" | "1/1" | "3/4" | "9/16" | "21/9";
 
@@ -113,6 +113,7 @@ export type TemplateItem = {
 
 export type TemplateSection = {
   id: string;
+  type?: "experience" | "education" | "custom";
   title: string;
   subtitle: string;
   itemsSubtitle?: string;
@@ -172,6 +173,8 @@ export type StoredTemplateRecord = {
   owner_id: string | null;
   title: string;
   data: ResumeTemplate;
+  is_published?: boolean;
+  published_at?: string | null;
   created_at: string;
   updated_at: string;
 };

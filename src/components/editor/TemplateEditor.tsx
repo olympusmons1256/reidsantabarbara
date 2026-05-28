@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type FocusEvent, type PointerEven
 import Link from "next/link";
 import { blankTemplate } from "@/data/blankTemplate";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { deleteTemplate as deleteStoredTemplate, getTemplateById, listTemplates, saveTemplate, uploadHeroImage, uploadSourceDocument, uploadTemplateAsset, uploadBannerVideo } from "@/lib/supabase/templateStore";
+import { deleteTemplate as deleteStoredTemplate, getTemplateById, listTemplates, saveTemplate, setTemplatePublishState, uploadHeroImage, uploadSourceDocument, uploadTemplateAsset, uploadBannerVideo } from "@/lib/supabase/templateStore";
 import { normalizeTemplate } from "@/lib/template/transformTemplate";
 import { TEMPLATE_PROFILE_SCOPE_FIELDS } from "@/types/template";
 import type {
@@ -119,6 +119,14 @@ function inferAssetTypeFromUrl(rawUrl: string): Exclude<TemplateAsset["type"], "
     return "video";
   }
 
+  if (
+    url.includes("matterport.com") ||
+    url.includes("my.matterport.com") ||
+    url.includes("/show/")
+  ) {
+    return "iframe";
+  }
+
   return "image";
 }
 
@@ -222,7 +230,7 @@ function convertTemplateAssetType(asset: TemplateAsset, nextType: TemplateAsset[
           id: uid("gallery-asset"),
           label: asset.label || "Gallery Asset 1",
           description: asset.description || "",
-          type: asset.type === "video" || asset.type === "doc" ? asset.type : "image",
+          type: asset.type === "video" || asset.type === "doc" || asset.type === "iframe" ? asset.type : "image",
           subType: "cover" as const,
           url: asset.url,
           preview: asset.preview,
@@ -330,6 +338,7 @@ export function TemplateEditor() {
   } | null>(null);
   const [lastSourceDiagnostics, setLastSourceDiagnostics] = useState<SourceDiagnostics | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
   const [intakeShowContext, setIntakeShowContext] = useState(false);
   const [hasHydratedAuth, setHasHydratedAuth] = useState(false);
   const [showResumePreview, setShowResumePreview] = useState(false);
@@ -422,6 +431,21 @@ export function TemplateEditor() {
     previewQuery.set("variantId", activeVariantId);
   }
   const previewHref = previewQuery.toString() ? `/?${previewQuery.toString()}` : "/";
+  const currentSavedTemplate = hasPersistedTemplateId
+    ? savedTemplates.find((row) => row.id === template.id)
+    : null;
+  const isPublished = Boolean(currentSavedTemplate?.is_published);
+  const publishedQuery = new URLSearchParams();
+  if (hasPersistedTemplateId) {
+    publishedQuery.set("templateId", template.id);
+  }
+  if (activeVariantId) {
+    publishedQuery.set("variantId", activeVariantId);
+  }
+  const relativePublishedHref = publishedQuery.toString() ? `/?${publishedQuery.toString()}` : "/";
+  const publishedHref = typeof window !== "undefined"
+    ? `${window.location.origin}${relativePublishedHref}`
+    : relativePublishedHref;
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -779,8 +803,8 @@ export function TemplateEditor() {
     };
   };
 
-  const sendEditorChat = async () => {
-    const prompt = chatInput.trim();
+  const sendEditorChat = async (override?: { prompt?: string; selectedFields?: EditorFieldContext[] }) => {
+    const prompt = (override?.prompt ?? chatInput).trim();
     if (!prompt) {
       return;
     }
@@ -794,11 +818,13 @@ export function TemplateEditor() {
         url: document.url,
       }));
 
-    const effectiveSelectedFields = selectedFields.length
-      ? selectedFields
-      : focusedField
-        ? [focusedField]
-        : [];
+    const effectiveSelectedFields = override?.selectedFields
+      ? override.selectedFields
+      : selectedFields.length
+        ? selectedFields
+        : focusedField
+          ? [focusedField]
+          : [];
     const retainedField = focusedField ?? effectiveSelectedFields[effectiveSelectedFields.length - 1] ?? null;
 
     const userMessage: EditorChatMessage = {
@@ -808,7 +834,9 @@ export function TemplateEditor() {
     };
 
     setChatMessages((current) => [...current, userMessage]);
-    setChatInput("");
+    if (!override?.prompt) {
+      setChatInput("");
+    }
 
     try {
       setIsChatLoading(true);
@@ -970,6 +998,144 @@ export function TemplateEditor() {
 
           if (parts[2] === "audience") {
             return { ...variant, audience: rawValue };
+          }
+
+          const validSectionItemPairs = new Set(
+            variant.sections.flatMap((section) =>
+              section.items.map((item) => `${section.id}::${item.id}`)
+            )
+          );
+          const firstSectionItemPair = variant.sections
+            .flatMap((section) => section.items.map((item) => `${section.id}::${item.id}`))[0];
+
+          const normalizeTimelineStepsFromUnknown = (
+            source: unknown,
+            fallbackSteps: TemplateTourStep[]
+          ): TemplateTourStep[] | null => {
+            if (!Array.isArray(source)) {
+              return null;
+            }
+
+            const normalized = source
+              .map((entry, index) => {
+                const token = (entry && typeof entry === "object") ? (entry as Record<string, unknown>) : {};
+                const stepId = typeof token.id === "string" && token.id.trim() ? token.id.trim() : uid("step");
+                const labelRaw = typeof token.label === "string" ? token.label.trim() : "";
+                const durationRaw = Number(token.durationMs);
+                const fallback = fallbackSteps[index];
+
+                let sectionId = typeof token.sectionId === "string" ? token.sectionId.trim() : "";
+                let itemId = typeof token.itemId === "string" ? token.itemId.trim() : "";
+
+                const sectionItemRaw = typeof token.sectionItem === "string" ? token.sectionItem.trim() : "";
+                if ((!sectionId || !itemId) && sectionItemRaw.includes("::")) {
+                  const [nextSectionId, nextItemId] = sectionItemRaw.split("::");
+                  sectionId = nextSectionId?.trim() ?? sectionId;
+                  itemId = nextItemId?.trim() ?? itemId;
+                }
+
+                const maybePair = `${sectionId}::${itemId}`;
+                if (!validSectionItemPairs.has(maybePair)) {
+                  if (fallback && validSectionItemPairs.has(`${fallback.sectionId}::${fallback.itemId}`)) {
+                    sectionId = fallback.sectionId;
+                    itemId = fallback.itemId;
+                  } else if (firstSectionItemPair) {
+                    const [defaultSectionId, defaultItemId] = firstSectionItemPair.split("::");
+                    sectionId = defaultSectionId;
+                    itemId = defaultItemId;
+                  } else {
+                    return null;
+                  }
+                }
+
+                return {
+                  id: stepId,
+                  label: labelRaw || `Step ${index + 1}`,
+                  sectionId,
+                  itemId,
+                  durationMs: Number.isFinite(durationRaw) ? Math.max(400, Math.min(12000, Math.round(durationRaw))) : (fallback?.durationMs ?? 1800),
+                } satisfies TemplateTourStep;
+              })
+              .filter((step): step is TemplateTourStep => Boolean(step));
+
+            return normalized.length ? normalized : null;
+          };
+
+          if (parts[2] === "timelineTour") {
+            if (parts[3] === "enabled") {
+              return {
+                ...variant,
+                timelineTour: {
+                  ...variant.timelineTour,
+                  enabled: ["true", "1", "yes", "on"].includes(rawValue.trim().toLowerCase()),
+                },
+              };
+            }
+
+            if (parts[3] === "stepsJson") {
+              try {
+                const parsed = JSON.parse(rawValue) as unknown;
+                const normalizedSteps = normalizeTimelineStepsFromUnknown(parsed, variant.timelineTour.steps);
+                if (!normalizedSteps) {
+                  return variant;
+                }
+
+                return {
+                  ...variant,
+                  timelineTour: {
+                    ...variant.timelineTour,
+                    steps: normalizedSteps,
+                  },
+                };
+              } catch {
+                return variant;
+              }
+            }
+
+            if (parts[3] === "step") {
+              const stepId = parts[4];
+              const field = parts[5];
+              if (!stepId || !field) {
+                return variant;
+              }
+
+              return {
+                ...variant,
+                timelineTour: {
+                  ...variant.timelineTour,
+                  steps: variant.timelineTour.steps.map((step) => {
+                    if (step.id !== stepId) {
+                      return step;
+                    }
+
+                    if (field === "label") {
+                      return { ...step, label: rawValue };
+                    }
+
+                    if (field === "durationMs") {
+                      const parsedDuration = Number(rawValue);
+                      if (!Number.isFinite(parsedDuration)) {
+                        return step;
+                      }
+                      return { ...step, durationMs: Math.max(400, Math.min(12000, Math.round(parsedDuration))) };
+                    }
+
+                    if (field === "sectionItem") {
+                      const [sectionId, itemId] = rawValue.split("::");
+                      const pair = `${sectionId ?? ""}::${itemId ?? ""}`;
+                      if (!validSectionItemPairs.has(pair)) {
+                        return step;
+                      }
+                      return { ...step, sectionId, itemId };
+                    }
+
+                    return step;
+                  }),
+                },
+              };
+            }
+
+            return variant;
           }
 
           if (parts[2] === "dimension") {
@@ -1262,11 +1428,11 @@ export function TemplateEditor() {
     setStatus(`Applied ${updates.length} suggested update${updates.length === 1 ? "" : "s"}.`);
   };
 
-  const handleSaveTemplate = async () => {
+  const handleSaveTemplate = async (): Promise<StoredTemplateRecord | null> => {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) {
       setStatus("Supabase is not configured.");
-      return;
+      return null;
     }
 
     try {
@@ -1274,7 +1440,7 @@ export function TemplateEditor() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
         setStatus("Sign in first to save templates.");
-        return;
+        return null;
       }
 
       const saved = await saveTemplate({
@@ -1293,8 +1459,63 @@ export function TemplateEditor() {
       }
       setHasUnsavedChanges(false);
       setStatus("Template saved.");
+      return saved;
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Save failed.");
+      return null;
+    }
+  };
+
+  const handleTogglePublish = async () => {
+    if (isPublishing) {
+      return;
+    }
+
+    setIsPublishing(true);
+    try {
+      let persistedId = hasPersistedTemplateId ? template.id : "";
+      if (!persistedId) {
+        const saved = await handleSaveTemplate();
+        persistedId = saved?.id ?? "";
+      }
+
+      if (!persistedId) {
+        setStatus("Save a template first, then publish.");
+        return;
+      }
+
+      const nextPublished = !isPublished;
+      const updated = await setTemplatePublishState({ id: persistedId, isPublished: nextPublished });
+      setSavedTemplates((current) => [updated, ...current.filter((row) => row.id !== updated.id)]);
+
+      setStatus(nextPublished ? "Resume published. Share link copied." : "Resume unpublished.");
+
+      if (nextPublished && typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(publishedHref);
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Publish action failed.");
+    } finally {
+      setIsPublishing(false);
+    }
+  };
+
+  const handleCopyPublishedLink = async () => {
+    if (!isPublished) {
+      setStatus("Publish this template first to generate a shareable link.");
+      return;
+    }
+
+    if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+      setStatus("Clipboard is unavailable in this browser.");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(publishedHref);
+      setStatus("Published link copied.");
+    } catch {
+      setStatus("Could not copy link.");
     }
   };
 
@@ -2197,15 +2418,19 @@ export function TemplateEditor() {
     assetDragStateRef.current = null;
   };
 
-  const addSection = () => {
+  const addSection = (sectionType: "experience" | "education" | "custom" = "experience") => {
+    const defaultTitle = sectionType === "education" ? "Education" : "New Section";
+    const defaultSubtitle = sectionType === "education" ? "Institution · Program" : "";
+
     updateActiveVariant((variant) => ({
       ...variant,
       sections: [
         ...variant.sections,
         {
           id: uid("section"),
-          title: "New Section",
-          subtitle: "",
+          type: sectionType,
+          title: defaultTitle,
+          subtitle: defaultSubtitle,
           itemsSubtitle: "",
           metadataItemsText: "",
           dateRange: "",
@@ -2680,6 +2905,23 @@ export function TemplateEditor() {
     }));
   };
 
+  const suggestTimelineTour = () => {
+    if (!activeVariant) {
+      return;
+    }
+
+    const timelineField: EditorFieldContext = {
+      path: `variant:${activeVariant.id}:timelineTour:stepsJson`,
+      label: "Timeline tour steps (JSON)",
+      value: JSON.stringify(activeVariant.timelineTour.steps, null, 2),
+    };
+
+    void sendEditorChat({
+      prompt: "Generate a timeline tour based on major resume milestones. Return concise, chronological steps with clear labels and realistic durations. Prioritize signature projects and turning points.",
+      selectedFields: [timelineField],
+    });
+  };
+
   const addConnection = () => {
     if (template.variants.length < 2) {
       setStatus("Add at least two variants before creating a connection.");
@@ -2741,9 +2983,43 @@ export function TemplateEditor() {
               {hasUnsavedChanges ? <span className="inline-block h-1.5 w-1.5 rounded-full bg-yellow-300" title="Unsaved changes" /> : null}
               Save Template
             </button>
+            <button
+              type="button"
+              onClick={handleTogglePublish}
+              disabled={isPublishing}
+              className="px-3 py-2 text-[11px] uppercase tracking-[0.16em]"
+              style={{
+                border: `1px solid ${isPublished ? "#fda4af66" : "#93c5fd66"}`,
+                borderRadius: "2px",
+                color: isPublished ? "#fda4af" : "#bfdbfe",
+                opacity: isPublishing ? 0.7 : 1,
+              }}
+            >
+              {isPublishing ? "Working..." : isPublished ? "Unpublish" : "Publish"}
+            </button>
+            <button
+              type="button"
+              onClick={handleCopyPublishedLink}
+              disabled={!isPublished}
+              className="px-3 py-2 text-[11px] uppercase tracking-[0.16em]"
+              style={{ border: "1px solid #86efac55", borderRadius: "2px", color: "#86efac", opacity: isPublished ? 1 : 0.5 }}
+            >
+              Copy Link
+            </button>
           </div>
         </div>
         <p className="mt-2 text-xs" style={{ color: "var(--label)" }}>{status}</p>
+        {isPublished ? (
+          <div className="mt-2 flex items-center gap-2">
+            <p className="text-[10px] uppercase tracking-[0.14em]" style={{ color: "var(--label)" }}>Published URL</p>
+            <input
+              readOnly
+              value={publishedHref}
+              className="min-w-0 flex-1 border bg-transparent px-2 py-1 text-[11px]"
+              style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }}
+            />
+          </div>
+        ) : null}
 
         <details className="mt-3 border-t pt-3" style={{ borderColor: "var(--border)" }}>
           <summary className="cursor-pointer list-none text-[11px] uppercase tracking-[0.18em]" style={{ color: "var(--label)" }}>
@@ -3268,7 +3544,10 @@ export function TemplateEditor() {
       <section id="sections-editor-anchor" className="glass px-6 py-5" style={{ borderRadius: "2px" }}>
         <div className="flex items-center justify-between">
           <h2 className="text-sm uppercase tracking-[0.18em]" style={{ color: "var(--label)" }}>Sections + Items + Media</h2>
-          <button type="button" onClick={addSection} className="px-3 py-1 text-[11px] uppercase tracking-[0.16em]" style={{ border: "1px solid var(--border)", borderRadius: "2px", color: "#f0f0f0" }}>Add Section</button>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => addSection("education")} className="px-3 py-1 text-[11px] uppercase tracking-[0.16em]" style={{ border: "1px solid #93c5fd66", borderRadius: "2px", color: "#bfdbfe" }}>Add Education</button>
+            <button type="button" onClick={() => addSection("experience")} className="px-3 py-1 text-[11px] uppercase tracking-[0.16em]" style={{ border: "1px solid var(--border)", borderRadius: "2px", color: "#f0f0f0" }}>Add Section</button>
+          </div>
         </div>
         <div className="mt-4 space-y-4">
           {sortSectionsByDateDesc(activeVariant?.sections ?? []).map((section) => (
@@ -3318,6 +3597,7 @@ export function TemplateEditor() {
                 <input value={section.title} onChange={(event) => updateSection(section.id, (current) => ({ ...current, title: event.target.value }))} data-field-path={`variant:${activeVariant?.id ?? "unknown"}:section:${section.id}:title`} data-field-label="Section title" placeholder="Section title" className="border bg-transparent px-2 py-1 text-sm" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }} />
                 <input value={section.subtitle} onChange={(event) => updateSection(section.id, (current) => ({ ...current, subtitle: event.target.value }))} data-field-path={`variant:${activeVariant?.id ?? "unknown"}:section:${section.id}:subtitle`} data-field-label="Section subtitle" placeholder="Section subtitle" className="border bg-transparent px-2 py-1 text-sm" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }} />
               </div>
+              <select value={section.type ?? "experience"} onChange={(event) => updateSection(section.id, (current) => ({ ...current, type: event.target.value as "experience" | "education" | "custom" }))} data-field-path={`variant:${activeVariant?.id ?? "unknown"}:section:${section.id}:type`} data-field-label="Section type" className="mt-2 w-full border bg-transparent px-2 py-1 text-sm" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }}><option value="experience">experience</option><option value="education">education</option><option value="custom">custom</option></select>
               <input value={section.dateRange ?? ""} onChange={(event) => updateSection(section.id, (current) => ({ ...current, dateRange: event.target.value }))} data-field-path={`variant:${activeVariant?.id ?? "unknown"}:section:${section.id}:dateRange`} data-field-label="Section date range" placeholder="Section date range (e.g. 2020 - Present)" className="mt-2 w-full border bg-transparent px-2 py-1 text-sm" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }} />
               <textarea value={section.description} onChange={(event) => updateSection(section.id, (current) => ({ ...current, description: event.target.value }))} data-field-path={`variant:${activeVariant?.id ?? "unknown"}:section:${section.id}:description`} data-field-label="Section description" placeholder="Section description" className="mt-2 w-full border bg-transparent px-2 py-1 text-sm" rows={2} style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }} />
               <div className="mt-3 grid gap-2 sm:grid-cols-3">
@@ -3674,7 +3954,7 @@ export function TemplateEditor() {
                           <div key={asset.id} className="grid gap-2 border p-3 sm:grid-cols-4" style={{ borderColor: "var(--border)", borderRadius: "2px" }}>
                             {/* Row 1: label | type | (layout if gallery, else subType) | aspect+remove */}
                             <input value={asset.label} onChange={(event) => updateItem(section.id, item.id, (current) => ({ ...current, assets: current.assets.map((token) => token.id === asset.id ? { ...token, label: event.target.value } : token) }))} data-field-path={`variant:${activeVariant?.id ?? "unknown"}:section:${section.id}:item:${item.id}:asset:${asset.id}:label`} data-field-label="Asset label" placeholder="Label" className="border bg-transparent px-2 py-1 text-sm" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }} />
-                            <select value={asset.type} onChange={(event) => updateItem(section.id, item.id, (current) => ({ ...current, assets: current.assets.map((token) => token.id === asset.id ? convertTemplateAssetType(token, event.target.value as TemplateAsset["type"]) : token) }))} data-field-path={`variant:${activeVariant?.id ?? "unknown"}:section:${section.id}:item:${item.id}:asset:${asset.id}:type`} data-field-label="Asset type" className="border bg-transparent px-2 py-1 text-sm" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }}><option value="image">image</option><option value="video">video</option><option value="doc">doc</option><option value="gallery">gallery</option></select>
+                            <select value={asset.type} onChange={(event) => updateItem(section.id, item.id, (current) => ({ ...current, assets: current.assets.map((token) => token.id === asset.id ? convertTemplateAssetType(token, event.target.value as TemplateAsset["type"]) : token) }))} data-field-path={`variant:${activeVariant?.id ?? "unknown"}:section:${section.id}:item:${item.id}:asset:${asset.id}:type`} data-field-label="Asset type" className="border bg-transparent px-2 py-1 text-sm" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }}><option value="image">image</option><option value="video">video</option><option value="doc">doc</option><option value="iframe">iframe</option><option value="gallery">gallery</option></select>
                             {asset.type === "gallery" ? (
                               <select value={asset.galleryLayout ?? "masonry"} onChange={(event) => updateItem(section.id, item.id, (current) => ({ ...current, assets: current.assets.map((token) => token.id === asset.id ? { ...token, galleryLayout: event.target.value as "masonry" | "carousel" } : token) }))} className="border bg-transparent px-2 py-1 text-sm" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }}>
                                 <option value="masonry">masonry</option>
@@ -3752,9 +4032,11 @@ export function TemplateEditor() {
                                                   <video src={previewSrc} className="pointer-events-none h-full w-full" muted loop autoPlay playsInline style={{ objectFit: childAsset.fit ?? "cover", objectPosition: `${childAsset.focusX ?? 50}% ${childAsset.focusY ?? 50}%` }} />
                                                 ) : childAsset.type === "doc" && previewSrc && isPdfSource(previewSrc, childAsset.mimeType) ? (
                                                   <iframe src={`${previewSrc}#toolbar=0&navpanes=0&scrollbar=0`} title={childAsset.label || "Gallery document preview"} className="pointer-events-none h-full w-full bg-black" />
+                                                ) : childAsset.type === "iframe" && previewSrc ? (
+                                                  <iframe src={previewSrc} title={childAsset.label || "Gallery embed preview"} className="pointer-events-none h-full w-full bg-black" style={{ border: 0 }} />
                                                 ) : (
                                                   <div className="flex h-full w-full items-center justify-center px-3 text-center text-[10px] uppercase tracking-[0.16em]" style={{ color: "var(--label)" }}>
-                                                    {childAsset.type === "doc" ? "PDF / Doc" : "No preview"}
+                                                    {childAsset.type === "doc" ? "PDF / Doc" : childAsset.type === "iframe" ? "Embed" : "No preview"}
                                                   </div>
                                                 )}
                                               </button>
@@ -3782,11 +4064,15 @@ export function TemplateEditor() {
                                                   <img src={previewSrc} alt={childAsset.label || "Gallery preview"} className="pointer-events-none block w-full" />
                                                 ) : childAsset.type === "video" && previewSrc ? (
                                                   <video src={previewSrc} className="pointer-events-none block w-full" muted loop autoPlay playsInline />
+                                                ) : childAsset.type === "doc" && previewSrc ? (
+                                                  <iframe src={`${previewSrc}#toolbar=0&navpanes=0&scrollbar=0`} title={childAsset.label || "Gallery document preview"} className="pointer-events-none h-40 w-full bg-black" />
+                                                ) : childAsset.type === "iframe" && previewSrc ? (
+                                                  <iframe src={previewSrc} title={childAsset.label || "Gallery embed preview"} className="pointer-events-none h-40 w-full bg-black" style={{ border: 0 }} />
                                                 ) : previewSrc ? (
                                                   <iframe src={`${previewSrc}#toolbar=0&navpanes=0&scrollbar=0`} title={childAsset.label || "Gallery document preview"} className="pointer-events-none h-40 w-full bg-black" />
                                                 ) : (
                                                   <div className="flex h-24 w-full items-center justify-center text-[10px] uppercase tracking-[0.16em]" style={{ color: "var(--label)", background: "#111" }}>
-                                                    {childAsset.type === "doc" ? "PDF / Doc" : "No preview"}
+                                                    {childAsset.type === "doc" ? "PDF / Doc" : childAsset.type === "iframe" ? "Embed" : "No preview"}
                                                   </div>
                                                 )}
                                               </button>
@@ -3896,7 +4182,7 @@ export function TemplateEditor() {
                                             ))}
                                           </select>
                                           <input value={selectedGalleryChild.label} onChange={(event) => updateItem(section.id, item.id, (current) => ({ ...current, assets: current.assets.map((token) => token.id !== asset.id ? token : { ...token, assets: (token.assets ?? []).map((entry) => entry.id === selectedGalleryChild.id ? { ...entry, label: event.target.value } : entry) }) }))} data-gallery-child-id={selectedGalleryChild.id} placeholder="Gallery asset label" className="border bg-transparent px-2 py-1 text-sm" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }} />
-                                          <select value={selectedGalleryChild.type} onChange={(event) => updateItem(section.id, item.id, (current) => ({ ...current, assets: current.assets.map((token) => token.id !== asset.id ? token : { ...token, assets: (token.assets ?? []).map((entry) => entry.id === selectedGalleryChild.id ? { ...entry, type: event.target.value as TemplateGalleryEntryAsset["type"] } : entry) }) }))} className="border bg-transparent px-2 py-1 text-sm" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }}><option value="image">image</option><option value="video">video</option><option value="doc">doc</option></select>
+                                          <select value={selectedGalleryChild.type} onChange={(event) => updateItem(section.id, item.id, (current) => ({ ...current, assets: current.assets.map((token) => token.id !== asset.id ? token : { ...token, assets: (token.assets ?? []).map((entry) => entry.id === selectedGalleryChild.id ? { ...entry, type: event.target.value as TemplateGalleryEntryAsset["type"] } : entry) }) }))} className="border bg-transparent px-2 py-1 text-sm" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }}><option value="image">image</option><option value="video">video</option><option value="doc">doc</option><option value="iframe">iframe</option></select>
                                           <select value={selectedGalleryChild.aspectRatio ?? "16/9"} onChange={(event) => updateAssetLayout(section.id, item.id, asset.id, { aspectRatio: event.target.value as "auto" | "16/9" | "4/3" | "1/1" | "3/4" | "9/16" | "21/9" }, selectedGalleryChild.id)} className="border bg-transparent px-2 py-1 text-sm" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }}><option value="auto">aspect ratio: auto</option><option value="16/9">16:9 landscape</option><option value="4/3">4:3 landscape</option><option value="1/1">1:1 square</option><option value="3/4">3:4 portrait</option><option value="9/16">9:16 portrait</option><option value="21/9">21:9 cinematic</option></select>
                                           <button type="button" onClick={() => updateItem(section.id, item.id, (current) => ({ ...current, assets: current.assets.map((token) => token.id !== asset.id ? token : { ...token, coverAssetId: selectedGalleryChild.id }) }))} className="border px-2 py-1 text-[10px] uppercase tracking-[0.14em]" style={{ borderColor: selectedGalleryChild.id === (asset.coverAssetId ?? getGalleryCoverAsset(asset)?.id) ? "rgba(255,255,255,0.35)" : "var(--border)", borderRadius: "2px", color: "#f0f0f0" }}>{selectedGalleryChild.id === (asset.coverAssetId ?? getGalleryCoverAsset(asset)?.id) ? "Cover child" : "Set as cover"}</button>
 
@@ -3904,7 +4190,7 @@ export function TemplateEditor() {
                                           <input type="file" accept="image/*,video/*,.pdf,application/pdf" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; void uploadGalleryAssetFile(file, section.id, item.id, asset.id, selectedGalleryChild.id); }} className="border bg-transparent px-2 py-1 text-xs" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }} />
                                           <textarea value={selectedGalleryChild.description ?? ""} onChange={(event) => updateItem(section.id, item.id, (current) => ({ ...current, assets: current.assets.map((token) => token.id !== asset.id ? token : { ...token, assets: (token.assets ?? []).map((entry) => entry.id === selectedGalleryChild.id ? { ...entry, description: event.target.value } : entry) }) }))} placeholder="Gallery asset description / context" className="border bg-transparent px-2 py-1 text-sm sm:col-span-4" rows={2} style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }} />
 
-                                          {selectedGalleryChild.type !== "doc" ? (
+                                          {selectedGalleryChild.type !== "doc" && selectedGalleryChild.type !== "iframe" ? (
                                             <>
                                               <select value={selectedGalleryChild.fit ?? "cover"} onChange={(event) => updateAssetLayout(section.id, item.id, asset.id, { fit: event.target.value as "cover" | "contain" }, selectedGalleryChild.id)} className="border bg-transparent px-2 py-1 text-sm" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }}><option value="cover">cover (crop)</option><option value="contain">contain (fit all)</option></select>
                                               <label className="flex items-center gap-2 text-xs sm:col-span-2" style={{ color: "var(--label)" }}>
@@ -3949,7 +4235,7 @@ export function TemplateEditor() {
                                 <input value={asset.url} onChange={(event) => updateItem(section.id, item.id, (current) => ({ ...current, assets: current.assets.map((token) => token.id === asset.id ? { ...token, url: event.target.value } : token) }))} data-field-path={`variant:${activeVariant?.id ?? "unknown"}:section:${section.id}:item:${item.id}:asset:${asset.id}:url`} data-field-label="Asset URL" placeholder="https://..." className="border bg-transparent px-2 py-1 text-sm sm:col-span-3" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }} />
                                 <input type="file" accept="image/*,video/*,.pdf,application/pdf" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; void uploadAssetFile(file, section.id, item.id, asset.id); }} className="border bg-transparent px-2 py-1 text-xs" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }} />
 
-                                {asset.type !== "doc" ? (
+                                {asset.type !== "doc" && asset.type !== "iframe" ? (
                                   <>
                                     <select
                                       value={asset.fit ?? "cover"}
@@ -3970,7 +4256,17 @@ export function TemplateEditor() {
                                   </>
                                 ) : <div className="sm:col-span-3" />}
 
-                                {(asset.type === "image" || asset.type === "video") && (asset.preview ?? asset.url) ? (
+                                {asset.type === "iframe" && (asset.preview ?? asset.url) ? (
+                                  <div className="sm:col-span-4">
+                                    <p className="mb-1 text-[10px] uppercase tracking-[0.14em]" style={{ color: "var(--label)" }}>Embed preview</p>
+                                    <div
+                                      className="w-full overflow-hidden border bg-black"
+                                      style={{ borderColor: "var(--border)", borderRadius: "2px", aspectRatio: asset.aspectRatio && asset.aspectRatio !== "auto" ? asset.aspectRatio : "16/9" }}
+                                    >
+                                      <iframe src={asset.preview ?? asset.url} title={asset.label || "Asset embed preview"} className="h-full w-full" style={{ border: 0 }} />
+                                    </div>
+                                  </div>
+                                ) : (asset.type === "image" || asset.type === "video") && (asset.preview ?? asset.url) ? (
                                   <div className="sm:col-span-4">
                                     <p className="mb-1 text-[10px] uppercase tracking-[0.14em]" style={{ color: "var(--label)" }}>
                                       Visual framing (drag to position)
@@ -4023,7 +4319,10 @@ export function TemplateEditor() {
             </article>
           ))}
           <div className="flex justify-end">
-            <button type="button" onClick={addSection} className="px-3 py-1 text-[11px] uppercase tracking-[0.16em]" style={{ border: "1px solid var(--border)", borderRadius: "2px", color: "#f0f0f0" }}>Add Section</button>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => addSection("education")} className="px-3 py-1 text-[11px] uppercase tracking-[0.16em]" style={{ border: "1px solid #93c5fd66", borderRadius: "2px", color: "#bfdbfe" }}>Add Education</button>
+              <button type="button" onClick={() => addSection("experience")} className="px-3 py-1 text-[11px] uppercase tracking-[0.16em]" style={{ border: "1px solid var(--border)", borderRadius: "2px", color: "#f0f0f0" }}>Add Section</button>
+            </div>
           </div>
         </div>
       </section>
@@ -4031,17 +4330,52 @@ export function TemplateEditor() {
       <section className="glass px-6 py-5" style={{ borderRadius: "2px" }}>
         <div className="flex items-center justify-between">
           <h2 className="text-sm uppercase tracking-[0.18em]" style={{ color: "var(--label)" }}>Timeline Tour Configuration</h2>
-          <button type="button" onClick={addTourStep} className="px-3 py-1 text-[11px] uppercase tracking-[0.16em]" style={{ border: "1px solid var(--border)", borderRadius: "2px", color: "#f0f0f0" }}>Add Tour Step</button>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={suggestTimelineTour} className="px-3 py-1 text-[11px] uppercase tracking-[0.16em]" style={{ border: "1px solid #86efac55", borderRadius: "2px", color: "#86efac" }}>Suggest Timeline Tour</button>
+            <button type="button" onClick={addTourStep} className="px-3 py-1 text-[11px] uppercase tracking-[0.16em]" style={{ border: "1px solid var(--border)", borderRadius: "2px", color: "#f0f0f0" }}>Add Tour Step</button>
+          </div>
         </div>
+        {activeVariant ? (
+          <>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <label className="flex items-center gap-2 text-xs" style={{ color: "var(--label)" }}>
+                <input
+                  type="checkbox"
+                  checked={activeVariant.timelineTour.enabled}
+                  onChange={(event) => updateActiveVariant((variant) => ({ ...variant, timelineTour: { ...variant.timelineTour, enabled: event.target.checked } }))}
+                  data-field-path={`variant:${activeVariant.id}:timelineTour:enabled`}
+                  data-field-label="Timeline tour enabled"
+                />
+                Tour enabled
+              </label>
+              <p className="text-[11px]" style={{ color: "var(--label)" }}>
+                Tip: select timeline fields, then ask Copilot to generate or refine milestone sequencing.
+              </p>
+            </div>
+            <textarea
+              value={JSON.stringify(activeVariant.timelineTour.steps, null, 2)}
+              data-field-path={`variant:${activeVariant.id}:timelineTour:stepsJson`}
+              data-field-label="Timeline tour steps (JSON)"
+              className="mt-2 w-full border bg-transparent px-2 py-1 text-xs"
+              rows={6}
+              readOnly
+              spellCheck={false}
+              style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace" }}
+            />
+          </>
+        ) : null}
         <div className="mt-3 space-y-2">
           {(activeVariant?.timelineTour.steps ?? []).map((step, index) => {
             const options = getVariantItemOptions(activeVariant?.id ?? "");
             return (
               <div key={step.id} className="grid gap-2 border p-3 sm:grid-cols-4" style={{ borderColor: "var(--border)", borderRadius: "2px" }}>
-                <input value={step.label} onChange={(event) => updateActiveVariant((variant) => ({ ...variant, timelineTour: { ...variant.timelineTour, steps: variant.timelineTour.steps.map((token, tokenIndex) => tokenIndex === index ? { ...token, label: event.target.value } : token) } }))} className="border bg-transparent px-2 py-1 text-sm" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }} />
-                <select value={`${step.sectionId}::${step.itemId}`} onChange={(event) => { const [sectionId, itemId] = event.target.value.split("::"); updateActiveVariant((variant) => ({ ...variant, timelineTour: { ...variant.timelineTour, steps: variant.timelineTour.steps.map((token, tokenIndex) => tokenIndex === index ? { ...token, sectionId, itemId } : token) } })); }} className="border bg-transparent px-2 py-1 text-sm" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }}>{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
-                <input type="number" value={step.durationMs} onChange={(event) => updateActiveVariant((variant) => ({ ...variant, timelineTour: { ...variant.timelineTour, steps: variant.timelineTour.steps.map((token, tokenIndex) => tokenIndex === index ? { ...token, durationMs: Number(event.target.value) || 0 } : token) } }))} className="border bg-transparent px-2 py-1 text-sm" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }} />
-                <label className="flex items-center gap-2 text-xs" style={{ color: "var(--label)" }}><input type="checkbox" checked={activeVariant?.timelineTour.enabled ?? true} onChange={(event) => updateActiveVariant((variant) => ({ ...variant, timelineTour: { ...variant.timelineTour, enabled: event.target.checked } }))} />Tour enabled</label>
+                <input value={step.label} onChange={(event) => updateActiveVariant((variant) => ({ ...variant, timelineTour: { ...variant.timelineTour, steps: variant.timelineTour.steps.map((token, tokenIndex) => tokenIndex === index ? { ...token, label: event.target.value } : token) } }))} data-field-path={`variant:${activeVariant?.id ?? "unknown"}:timelineTour:step:${step.id}:label`} data-field-label={`Timeline step ${index + 1} label`} className="border bg-transparent px-2 py-1 text-sm" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }} />
+                <select value={`${step.sectionId}::${step.itemId}`} onChange={(event) => { const [sectionId, itemId] = event.target.value.split("::"); updateActiveVariant((variant) => ({ ...variant, timelineTour: { ...variant.timelineTour, steps: variant.timelineTour.steps.map((token, tokenIndex) => tokenIndex === index ? { ...token, sectionId, itemId } : token) } })); }} data-field-path={`variant:${activeVariant?.id ?? "unknown"}:timelineTour:step:${step.id}:sectionItem`} data-field-label={`Timeline step ${index + 1} target`} className="border bg-transparent px-2 py-1 text-sm" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }}>{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
+                <input type="number" value={step.durationMs} onChange={(event) => updateActiveVariant((variant) => ({ ...variant, timelineTour: { ...variant.timelineTour, steps: variant.timelineTour.steps.map((token, tokenIndex) => tokenIndex === index ? { ...token, durationMs: Number(event.target.value) || 0 } : token) } }))} data-field-path={`variant:${activeVariant?.id ?? "unknown"}:timelineTour:step:${step.id}:durationMs`} data-field-label={`Timeline step ${index + 1} duration (ms)`} className="border bg-transparent px-2 py-1 text-sm" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#e4e4e7" }} />
+                <label className="flex items-center justify-between gap-2 text-xs" style={{ color: "var(--label)" }}>
+                  <span>Step {index + 1}</span>
+                  <button type="button" onClick={() => updateActiveVariant((variant) => ({ ...variant, timelineTour: { ...variant.timelineTour, steps: variant.timelineTour.steps.filter((token) => token.id !== step.id) } }))} className="border px-2 py-1 text-[10px] uppercase tracking-[0.14em]" style={{ borderColor: "#fda4af55", borderRadius: "2px", color: "#fda4af" }}>Remove</button>
+                </label>
               </div>
             );
           })}
@@ -4115,146 +4449,152 @@ export function TemplateEditor() {
       </section>
     </main>
 
-    <aside className="glass sticky top-6 max-h-[calc(100vh-3rem)] overflow-hidden px-4 py-4" style={{ borderRadius: "2px" }}>
+    <aside className="glass sticky top-6 flex max-h-[calc(100vh-3rem)] flex-col overflow-hidden px-4 py-4" style={{ borderRadius: "2px" }}>
       <p className="text-[10px] uppercase tracking-[0.2em]" style={{ color: "var(--label)" }}>Editor Copilot</p>
       <p className="mt-2 text-xs" style={{ color: "var(--label)" }}>
         Click fields to automatically build multi-field context, then ask for cross-field guidance.
       </p>
 
-      <div className="mt-3 rounded border p-2" style={{ borderColor: "var(--border)", minHeight: "74px" }}>
-        <p className="text-[10px] uppercase tracking-[0.14em]" style={{ color: "var(--label)" }}>Focused Field</p>
-        <p className="mt-1 text-xs" style={{ color: "#e4e4e7" }}>{focusedField?.label ?? "None focused"}</p>
-        {focusedField ? (
-          <p className="mt-1 line-clamp-2 text-[11px]" style={{ color: "rgba(255,255,255,0.55)" }}>
-            {focusedField.value || "(empty)"}
-          </p>
-        ) : null}
-        <div className="mt-2 flex gap-2">
-          <button
-            type="button"
-            onClick={() => setSelectedFields([])}
-            disabled={!selectedFields.length}
-            className="px-2 py-1 text-[10px] uppercase tracking-[0.14em]"
-            style={{ border: "1px solid #fda4af55", borderRadius: "2px", color: "#fda4af", opacity: selectedFields.length ? 1 : 0.5 }}
-          >
-            Clear
-          </button>
+      {/* Scrollable panels */}
+      <div className="mt-3 flex-1 space-y-3 overflow-y-auto pr-0.5">
+
+        <div className="rounded border p-2" style={{ borderColor: "var(--border)", minHeight: "74px" }}>
+          <p className="text-[10px] uppercase tracking-[0.14em]" style={{ color: "var(--label)" }}>Focused Field</p>
+          <p className="mt-1 text-xs" style={{ color: "#e4e4e7" }}>{focusedField?.label ?? "None focused"}</p>
+          {focusedField ? (
+            <p className="mt-1 line-clamp-2 text-[11px]" style={{ color: "rgba(255,255,255,0.55)" }}>
+              {focusedField.value || "(empty)"}
+            </p>
+          ) : null}
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedFields([])}
+              disabled={!selectedFields.length}
+              className="px-2 py-1 text-[10px] uppercase tracking-[0.14em]"
+              style={{ border: "1px solid #fda4af55", borderRadius: "2px", color: "#fda4af", opacity: selectedFields.length ? 1 : 0.5 }}
+            >
+              Clear
+            </button>
+          </div>
         </div>
-      </div>
 
-      <div className="mt-3 rounded border p-2" style={{ borderColor: "var(--border)", minHeight: "92px" }}>
-        <p className="text-[10px] uppercase tracking-[0.14em]" style={{ color: "var(--label)" }}>Selected Fields ({selectedFields.length})</p>
-        {selectedFields.length ? (
-          <ul className="mt-2 space-y-1">
-            {selectedFields.map((field) => (
-              <li key={field.path} className="flex items-center justify-between gap-2 rounded border px-2 py-1" style={{ borderColor: "var(--border)" }}>
-                <span className="min-w-0 truncate text-[11px]" style={{ color: "#e4e4e7" }}>{field.label}</span>
-                <button
-                  type="button"
-                  onClick={() => removeSelectedField(field.path)}
-                  className="text-[10px] uppercase tracking-[0.12em]"
-                  style={{ color: "#fda4af" }}
-                >
-                  Remove
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="mt-2 text-xs" style={{ color: "var(--label)" }}>No fields selected yet.</p>
-        )}
-      </div>
-
-      <div className="mt-3 rounded border p-2" style={{ borderColor: "var(--border)", minHeight: "92px" }}>
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-[10px] uppercase tracking-[0.14em]" style={{ color: "var(--label)" }}>
-            Attached Documents ({intakeDocuments.length})
-          </p>
-          <label className="cursor-pointer border px-2 py-1 text-[10px] uppercase tracking-[0.14em]" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#f0f0f0" }}>
-            Attach
-            <input
-              type="file"
-              multiple
-              className="hidden"
-              onChange={(event) => {
-                void ingestSourceDocuments(event.target.files);
-                event.currentTarget.value = "";
-              }}
-            />
-          </label>
+        <div className="rounded border p-2" style={{ borderColor: "var(--border)", minHeight: "92px" }}>
+          <p className="text-[10px] uppercase tracking-[0.14em]" style={{ color: "var(--label)" }}>Selected Fields ({selectedFields.length})</p>
+          {selectedFields.length ? (
+            <ul className="mt-2 space-y-1">
+              {selectedFields.map((field) => (
+                <li key={field.path} className="flex items-center justify-between gap-2 rounded border px-2 py-1" style={{ borderColor: "var(--border)" }}>
+                  <span className="min-w-0 truncate text-[11px]" style={{ color: "#e4e4e7" }}>{field.label}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeSelectedField(field.path)}
+                    className="text-[10px] uppercase tracking-[0.12em]"
+                    style={{ color: "#fda4af" }}
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-2 text-xs" style={{ color: "var(--label)" }}>No fields selected yet.</p>
+          )}
         </div>
-        <p className="mt-1 text-[11px]" style={{ color: "var(--label)" }}>
-          Attached docs are included in copilot context.
-        </p>
-        {intakeDocuments.length ? (
-          <ul className="mt-2 space-y-1">
-            {intakeDocuments.map((document, index) => (
-              <li key={`${document.name}-${index}`} className="flex items-center justify-between gap-2 rounded border px-2 py-1" style={{ borderColor: "var(--border)" }}>
-                <span className="min-w-0 truncate text-[11px]" style={{ color: "#e4e4e7" }}>
-                  {document.name}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => removeDocument(index)}
-                  className="shrink-0 text-[10px] uppercase tracking-[0.12em]"
-                  style={{ color: "#fda4af" }}
-                >
-                  Remove
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="mt-2 text-xs" style={{ color: "var(--label)" }}>
-            No documents attached yet.
-          </p>
-        )}
-      </div>
 
-      <div className="mt-3 h-[340px] overflow-y-auto rounded border p-2" style={{ borderColor: "var(--border)" }}>
-        {chatMessages.length || isChatLoading ? (
-          <ul className="space-y-2">
-            {chatMessages.map((message) => (
-              <li key={message.id} className="rounded border px-2 py-2 text-xs" style={{ borderColor: "var(--border)", color: message.role === "assistant" ? "#e4e4e7" : "#fef08a" }}>
-                <p className="text-[10px] uppercase tracking-[0.12em]" style={{ color: "var(--label)" }}>{message.role}</p>
-                <p className="mt-1 whitespace-pre-wrap">{message.text}</p>
-                {message.role === "assistant" && (message.fieldUpdates?.length ?? 0) > 0 ? (
-                  <div className="mt-2">
-                    <p className="text-[10px]" style={{ color: "var(--label)" }}>
-                      {message.fieldUpdates?.length} field update{(message.fieldUpdates?.length ?? 0) === 1 ? "" : "s"} ready.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => applyChatFieldUpdates(message.id)}
-                      disabled={Boolean(message.applied)}
-                      className="mt-1 px-2 py-1 text-[10px] uppercase tracking-[0.12em]"
-                      style={{ border: "1px solid #86efac55", borderRadius: "2px", color: "#86efac", opacity: message.applied ? 0.6 : 1 }}
-                    >
-                      {message.applied ? "Applied" : "Apply to Field(s)"}
-                    </button>
-                  </div>
-                ) : null}
-              </li>
-            ))}
-            {isChatLoading && (
-              <li className="rounded border px-2 py-2 text-xs" style={{ borderColor: "var(--border)", color: "#a1a1a1" }}>
-                <p className="text-[10px] uppercase tracking-[0.12em]" style={{ color: "var(--label)" }}>assistant</p>
-                <p className="mt-1 flex items-center gap-1">
-                  <span>Thinking</span>
-                  <span className="inline-flex gap-0.5">
-                    <span className="inline-block h-1 w-1 rounded-full bg-current animate-bounce" style={{ animationDelay: "0ms" }} />
-                    <span className="inline-block h-1 w-1 rounded-full bg-current animate-bounce" style={{ animationDelay: "150ms" }} />
-                    <span className="inline-block h-1 w-1 rounded-full bg-current animate-bounce" style={{ animationDelay: "300ms" }} />
+        <div className="rounded border p-2" style={{ borderColor: "var(--border)", minHeight: "92px" }}>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[10px] uppercase tracking-[0.14em]" style={{ color: "var(--label)" }}>
+              Attached Documents ({intakeDocuments.length})
+            </p>
+            <label className="cursor-pointer border px-2 py-1 text-[10px] uppercase tracking-[0.14em]" style={{ borderColor: "var(--border)", borderRadius: "2px", color: "#f0f0f0" }}>
+              Attach
+              <input
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(event) => {
+                  void ingestSourceDocuments(event.target.files);
+                  event.currentTarget.value = "";
+                }}
+              />
+            </label>
+          </div>
+          <p className="mt-1 text-[11px]" style={{ color: "var(--label)" }}>
+            Attached docs are included in copilot context.
+          </p>
+          {intakeDocuments.length ? (
+            <ul className="mt-2 space-y-1">
+              {intakeDocuments.map((document, index) => (
+                <li key={`${document.name}-${index}`} className="flex items-center justify-between gap-2 rounded border px-2 py-1" style={{ borderColor: "var(--border)" }}>
+                  <span className="min-w-0 truncate text-[11px]" style={{ color: "#e4e4e7" }}>
+                    {document.name}
                   </span>
-                </p>
-              </li>
-            )}
-          </ul>
-        ) : (
-          <p className="text-xs" style={{ color: "var(--label)" }}>No messages yet.</p>
-        )}
-      </div>
+                  <button
+                    type="button"
+                    onClick={() => removeDocument(index)}
+                    className="shrink-0 text-[10px] uppercase tracking-[0.12em]"
+                    style={{ color: "#fda4af" }}
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-2 text-xs" style={{ color: "var(--label)" }}>
+              No documents attached yet.
+            </p>
+          )}
+        </div>
 
+        <div className="overflow-y-auto rounded border p-2" style={{ borderColor: "var(--border)", minHeight: "120px" }}>
+          {chatMessages.length || isChatLoading ? (
+            <ul className="space-y-2">
+              {chatMessages.map((message) => (
+                <li key={message.id} className="rounded border px-2 py-2 text-xs" style={{ borderColor: "var(--border)", color: message.role === "assistant" ? "#e4e4e7" : "#fef08a" }}>
+                  <p className="text-[10px] uppercase tracking-[0.12em]" style={{ color: "var(--label)" }}>{message.role}</p>
+                  <p className="mt-1 whitespace-pre-wrap">{message.text}</p>
+                  {message.role === "assistant" && (message.fieldUpdates?.length ?? 0) > 0 ? (
+                    <div className="mt-2">
+                      <p className="text-[10px]" style={{ color: "var(--label)" }}>
+                        {message.fieldUpdates?.length} field update{(message.fieldUpdates?.length ?? 0) === 1 ? "" : "s"} ready.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => applyChatFieldUpdates(message.id)}
+                        disabled={Boolean(message.applied)}
+                        className="mt-1 px-2 py-1 text-[10px] uppercase tracking-[0.12em]"
+                        style={{ border: "1px solid #86efac55", borderRadius: "2px", color: "#86efac", opacity: message.applied ? 0.6 : 1 }}
+                      >
+                        {message.applied ? "Applied" : "Apply to Field(s)"}
+                      </button>
+                    </div>
+                  ) : null}
+                </li>
+              ))}
+              {isChatLoading && (
+                <li className="rounded border px-2 py-2 text-xs" style={{ borderColor: "var(--border)", color: "#a1a1a1" }}>
+                  <p className="text-[10px] uppercase tracking-[0.12em]" style={{ color: "var(--label)" }}>assistant</p>
+                  <p className="mt-1 flex items-center gap-1">
+                    <span>Thinking</span>
+                    <span className="inline-flex gap-0.5">
+                      <span className="inline-block h-1 w-1 rounded-full bg-current animate-bounce" style={{ animationDelay: "0ms" }} />
+                      <span className="inline-block h-1 w-1 rounded-full bg-current animate-bounce" style={{ animationDelay: "150ms" }} />
+                      <span className="inline-block h-1 w-1 rounded-full bg-current animate-bounce" style={{ animationDelay: "300ms" }} />
+                    </span>
+                  </p>
+                </li>
+              )}
+            </ul>
+          ) : (
+            <p className="text-xs" style={{ color: "var(--label)" }}>No messages yet.</p>
+          )}
+        </div>
+
+      </div>{/* end scroll */}
+
+      {/* Pinned input area */}
       <textarea
         value={chatInput}
         onChange={(event) => setChatInput(event.target.value)}

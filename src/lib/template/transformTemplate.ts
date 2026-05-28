@@ -67,6 +67,19 @@ function matchesDimension(dimension: TemplateTagDimension, pattern: RegExp): boo
   return pattern.test(dimension.id) || pattern.test(dimension.label);
 }
 
+/**
+ * Produces a stable merge key for company names so that strings like
+ * "New Game Plus", "New Game Plus, Inc.", and "New Game Plus LLC"
+ * all map to the same bucket.
+ */
+function normalizeCompanyMergeKey(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[,.]?\s*\b(inc|llc|ltd|co|corp|corporation|incorporated|limited|company|group|studios|studio|agency|solutions|services|consulting|partners|associates)\b\.?/gi, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 function normalizeProfileScope(scope?: TemplateProfileScopeField[]): TemplateProfileScopeField[] {
   if (!scope?.length) {
     return [...TEMPLATE_PROFILE_SCOPE_FIELDS];
@@ -138,10 +151,13 @@ function parseMetadataItems(text: string | undefined): string[] {
 }
 
 function normalizeGalleryChildAsset(asset: Partial<TemplateGalleryEntryAsset>, index: number): TemplateGalleryEntryAsset {
+  const rawType = String(asset.type ?? "").toLowerCase();
   const normalizedType = asset.type === "video"
     ? "video"
     : asset.type === "doc" || String(asset.type ?? "").toLowerCase() === "pdf" || String(asset.type ?? "").toLowerCase() === "document"
       ? "doc"
+      : asset.type === "iframe" || rawType === "embed" || rawType === "matterport"
+        ? "iframe"
       : "image";
 
   return {
@@ -172,7 +188,7 @@ function normalizeTemplateAssetList(rawAssets: Array<Partial<TemplateAsset>> | u
         normalizeGalleryChildAsset(
           {
             ...asset,
-            type: asset.type === "video" || asset.type === "doc" ? asset.type : "image",
+            type: asset.type === "video" || asset.type === "doc" || asset.type === "iframe" ? asset.type : "image",
           },
           index
         )
@@ -210,6 +226,8 @@ function normalizeTemplateAssetList(rawAssets: Array<Partial<TemplateAsset>> | u
         ? "video"
         : asset.type === "doc" || rawType === "pdf" || rawType === "document"
           ? "doc"
+          : asset.type === "iframe" || rawType === "embed" || rawType === "matterport"
+            ? "iframe"
           : "image";
     const galleryChildren = (asset.assets ?? []).map((childAsset, childIndex) => normalizeGalleryChildAsset(childAsset, childIndex));
 
@@ -273,6 +291,7 @@ export function normalizeTemplate(template: ResumeTemplate | LegacyTemplateShape
         profileScope: normalizeProfileScope(variant.profileScope),
         sections: variant.sections.map((section) => ({
           ...section,
+          type: section.type === "education" || section.type === "custom" ? section.type : "experience",
           itemsSubtitle: section.itemsSubtitle ?? "",
           metadataItemsText: section.metadataItemsText ?? "",
           dateRange: section.dateRange ?? "",
@@ -339,6 +358,7 @@ export function normalizeTemplate(template: ResumeTemplate | LegacyTemplateShape
         tagDimensions: legacy.tagDimensions ?? [],
         sections: (legacy.sections ?? []).map((section) => ({
           ...section,
+          type: section.type === "education" || section.type === "custom" ? section.type : "experience",
           itemsSubtitle: section.itemsSubtitle ?? "",
           metadataItemsText: section.metadataItemsText ?? "",
           dateRange: section.dateRange ?? "",
@@ -413,14 +433,35 @@ export function transformTemplateToRuntimeResume(
     { id: "company", label: "Company" },
     ...activeVariant.tagDimensions
       .filter((dimension) => dimension.id !== companyDimension?.id)
-      .map((dimension) => ({
-        id: dimension.id,
-        label: dimension.label?.trim() || dimension.id,
-      })),
+      .map((dimension) => {
+        // Normalize activation and role dimensions to canonical IDs so ExperienceCards
+        // can use simple `sortMode === "activation"` / `sortMode === "role"` checks.
+        if (dimension.id === activationDimension?.id && dimension.id !== roleDimension?.id) {
+          return { id: "activation", label: dimension.label?.trim() || "Project Type" };
+        }
+        if (dimension.id === roleDimension?.id) {
+          return { id: "role", label: dimension.label?.trim() || "Role" };
+        }
+        return { id: dimension.id, label: dimension.label?.trim() || dimension.id };
+      }),
   ];
 
   const experiencesByCompany = new Map<string, CompanyExperience>();
+  // Maps normalized merge key → the raw company key used in experiencesByCompany,
+  // so multiple section titles that refer to the same company converge.
+  const companyMergeKeyToRawKey = new Map<string, string>();
   let companyOrder = 0;
+
+  const resolveCompanyKey = (rawName: string): string => {
+    const mergeKey = normalizeCompanyMergeKey(rawName);
+    const existing = companyMergeKeyToRawKey.get(mergeKey);
+    if (existing) {
+      return existing;
+    }
+    // First time we see this normalized name — register the raw name as canonical.
+    companyMergeKeyToRawKey.set(mergeKey, rawName);
+    return rawName;
+  };
 
   const ensureCompanyExperience = (
     companyKey: string,
@@ -438,6 +479,7 @@ export function transformTemplateToRuntimeResume(
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-+|-+$/g, "") || `company-${companyOrder + 1}`,
+      sectionType: section.type === "education" || section.type === "custom" ? section.type : "experience",
       company: companyName || section.title,
       role: section.subtitle || activeVariant.title,
       period: section.dateRange?.trim() || activeVariant.audience || "Custom",
@@ -477,7 +519,7 @@ export function transformTemplateToRuntimeResume(
       const existing = sectionGroupsByCompany.get(groupCompanyName) ?? [];
       sectionGroupsByCompany.set(groupCompanyName, [...existing, groupItem]);
 
-      const companyKey = groupCompanyName || section.id;
+      const companyKey = resolveCompanyKey(groupCompanyName || section.id);
       const companyExperience = ensureCompanyExperience(companyKey, groupCompanyName, section, pickTheme(companyOrder));
       const groupContainerId = groupItem.id?.trim() || `group-${section.id}`;
 
@@ -499,7 +541,6 @@ export function transformTemplateToRuntimeResume(
       const theme = pickTheme(sectionIndex + itemIndex);
       const companyTag = companyDimension ? item.tags[companyDimension.id]?.[0] : undefined;
       const companyName = companyTag?.trim() || section.title;
-      const companyKey = companyName || section.id;
 
       const parentGroupTag =
         item.tags.parentGroup?.[0] ??
@@ -518,7 +559,22 @@ export function transformTemplateToRuntimeResume(
             : undefined;
       const parentGroupItem = explicitParentGroupItem ?? inferredParentGroupItem;
 
-      ensureCompanyExperience(companyKey, companyName, section, pickTheme(companyOrder));
+      // If this item belongs to a parent group, find the company that owns that group
+      // (identified by its group-item's company tag or section title) so items tagged
+      // with a product/sub-brand name (e.g. "Odyssey") still land in the right parent
+      // company bucket (e.g. "New Game Plus, Inc.") rather than creating a new one.
+      let companyKey: string;
+      let resolvedCompanyName: string;
+      if (parentGroupItem) {
+        const groupOwnerTag = companyDimension ? parentGroupItem.tags[companyDimension.id]?.[0] : undefined;
+        resolvedCompanyName = groupOwnerTag?.trim() || section.title;
+        companyKey = resolveCompanyKey(resolvedCompanyName || section.id);
+      } else {
+        resolvedCompanyName = companyName;
+        companyKey = resolveCompanyKey(companyName || section.id);
+      }
+
+      ensureCompanyExperience(companyKey, resolvedCompanyName, section, pickTheme(companyOrder));
 
       const activationType = item.tags[activationDimension?.id ?? ""]?.[0] ?? "general";
       const roleTypes = item.tags[roleDimension?.id ?? ""]?.length
@@ -616,7 +672,7 @@ export function transformTemplateToRuntimeResume(
     });
 
     if (!projectItems.length) {
-      const companyKey = section.title || section.id;
+      const companyKey = resolveCompanyKey(section.title || section.id);
       ensureCompanyExperience(companyKey, section.title, section, sectionTheme);
     }
   });

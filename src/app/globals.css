@@ -3,11 +3,11 @@
 :root {
   --background: #080809;
   --foreground: #e4e4e7;
-  --surface: rgba(255, 255, 255, 0.035);
-  --surface-hover: rgba(255, 255, 255, 0.06);
-  --border: rgba(255, 255, 255, 0.08);
-  --border-active: rgba(255, 255, 255, 0.22);
-  --label: rgba(255, 255, 255, 0.35);
+  --surface: rgba(255, 255, 255, 0.065);
+  --surface-hover: rgba(255, 255, 255, 0.11);
+  --border: rgba(255, 255, 255, 0.10);
+  --border-active: rgba(255, 255, 255, 0.18);
+  --label: rgba(255, 255, 255, 0.72);
   --glow-radius: 900px;
 }
 

@@ -15,6 +15,7 @@ const assetIcon = {
   image: "IMG",
   video: "VID",
   doc: "DOC",
+  iframe: "EMB",
   gallery: "GAL",
 } as const;
 
@@ -161,6 +162,34 @@ function renderSingleAsset(asset: DisplayAsset, withControls = false) {
       >
         <p className="text-xs font-light leading-5">
           Document — open the source asset to review the full content.
+        </p>
+      </div>
+    );
+  }
+
+  if (asset.type === "iframe") {
+    if (src) {
+      return (
+        <iframe
+          title={asset.label || "Embedded preview"}
+          src={src}
+          className="h-full w-full bg-black"
+          allow="autoplay; fullscreen; xr-spatial-tracking"
+          referrerPolicy="strict-origin-when-cross-origin"
+          loading="lazy"
+          style={{ border: 0 }}
+          allowFullScreen
+        />
+      );
+    }
+
+    return (
+      <div
+        className="flex h-full min-h-[10rem] items-center justify-center p-4 text-center"
+        style={{ color: "var(--label)" }}
+      >
+        <p className="text-xs font-light leading-5">
+          Embed — add a source URL to preview this media.
         </p>
       </div>
     );
@@ -345,7 +374,7 @@ export function ProjectSidePanel({
         {project ? (
           <div className={isPanelExpanded ? "grid gap-8 px-7 py-7 xl:grid-cols-[minmax(0,1.35fr)_minmax(20rem,1fr)]" : "space-y-8 px-7 py-7"}>
             <div className="space-y-8">
-              {project.dateRange ? (
+              {!isPanelExpanded && project.dateRange ? (
                 <div>
                   <p
                     className="text-[10px] uppercase tracking-[0.28em] font-light"
@@ -355,13 +384,14 @@ export function ProjectSidePanel({
                   </p>
                   <p
                     className="mt-3 text-sm font-light leading-6"
-                    style={{ color: "rgba(255,255,255,0.55)" }}
+                    style={{ color: "rgba(255,255,255,0.76)" }}
                   >
                     {project.dateRange}
                   </p>
                 </div>
               ) : null}
 
+              {!isPanelExpanded ? (
               <div>
                 <p
                   className="text-[10px] uppercase tracking-[0.28em] font-light"
@@ -371,11 +401,12 @@ export function ProjectSidePanel({
                 </p>
                 <p
                   className="mt-3 text-sm font-light leading-6"
-                  style={{ color: "rgba(255,255,255,0.55)" }}
+                  style={{ color: "rgba(255,255,255,0.76)" }}
                 >
                   {project.summary}
                 </p>
               </div>
+              ) : null}
 
               {activeAsset ? (
                 <div>
@@ -520,7 +551,7 @@ export function ProjectSidePanel({
                                       alt={childAsset.label}
                                       className="block w-full"
                                     />
-                                  ) : childAsset.type === "video" && childSrc ? (
+                                      ) : childAsset.type === "video" && childSrc ? (
                                     <video
                                       src={childSrc}
                                       className="block w-full"
@@ -529,6 +560,20 @@ export function ProjectSidePanel({
                                       autoPlay
                                       playsInline
                                     />
+                                      ) : childAsset.type === "doc" && childSrc ? (
+                                        <iframe
+                                          title={childAsset.label || "Document preview"}
+                                          src={`${childSrc}#toolbar=0&navpanes=0&scrollbar=0`}
+                                          className="h-36 w-full bg-black"
+                                          style={{ pointerEvents: "none" }}
+                                        />
+                                      ) : childAsset.type === "iframe" && childSrc ? (
+                                        <iframe
+                                          title={childAsset.label || "Embedded preview"}
+                                          src={childSrc}
+                                          className="h-36 w-full bg-black"
+                                          style={{ pointerEvents: "none", border: 0 }}
+                                        />
                                   ) : childSrc ? (
                                     <iframe
                                       title={childAsset.label || "Document preview"}
@@ -538,7 +583,7 @@ export function ProjectSidePanel({
                                     />
                                   ) : (
                                     <div className="flex h-24 items-center justify-center text-[10px] uppercase tracking-[0.14em]" style={{ color: "var(--label)", background: "#111" }}>
-                                      {childAsset.type === "doc" ? "PDF / Doc" : "No preview"}
+                                          {childAsset.type === "doc" ? "PDF / Doc" : childAsset.type === "iframe" ? "Embed" : "No preview"}
                                     </div>
                                   )}
                                 </div>
@@ -559,13 +604,13 @@ export function ProjectSidePanel({
                   </p>
 
                   {activeAsset.type === "gallery" && activeGalleryChild ? (
-                    <p className="mt-2 text-[11px] font-light leading-5" style={{ color: "rgba(255,255,255,0.58)" }}>
+                    <p className="mt-2 text-[11px] font-light leading-5" style={{ color: "rgba(255,255,255,0.74)" }}>
                       {activeAsset.galleryLayout === "carousel" ? "Carousel cover" : "Gallery highlight"}: {activeGalleryChild.label}
                       {activeGalleryChild.description ? ` — ${activeGalleryChild.description}` : ""}
                     </p>
                   ) : null}
                   {activeAsset.description ? (
-                    <p className="mt-2 text-xs font-light leading-5" style={{ color: "rgba(255,255,255,0.52)" }}>
+                    <p className="mt-2 text-xs font-light leading-5" style={{ color: "rgba(255,255,255,0.74)" }}>
                       {activeAsset.description}
                     </p>
                   ) : null}
@@ -585,6 +630,7 @@ export function ProjectSidePanel({
                 </div>
               ) : null}
 
+              {!isPanelExpanded ? (
               <div>
                 <p
                   className="text-[10px] uppercase tracking-[0.28em] font-light"
@@ -594,11 +640,12 @@ export function ProjectSidePanel({
                 </p>
                 <p
                   className="mt-3 text-sm font-light leading-6"
-                  style={{ color: "rgba(255,255,255,0.55)" }}
+                  style={{ color: "rgba(255,255,255,0.76)" }}
                 >
                   {project.impact}
                 </p>
               </div>
+              ) : null}
 
               <div>
                 <p
@@ -626,6 +673,33 @@ export function ProjectSidePanel({
             </div>
 
             <div className="space-y-8">
+              {isPanelExpanded ? (
+                <div>
+                  <p
+                    className="text-[10px] uppercase tracking-[0.28em] font-light"
+                    style={{ color: "var(--label)" }}
+                  >
+                    Project Overview
+                  </p>
+                  {project.dateRange ? (
+                    <p className="mt-3 text-sm font-light leading-6" style={{ color: "rgba(255,255,255,0.78)" }}>
+                      <span className="uppercase tracking-[0.14em] text-[10px]" style={{ color: "var(--label)" }}>Date Range</span>
+                      <br />
+                      {project.dateRange}
+                    </p>
+                  ) : null}
+                  <p className="mt-4 text-sm font-light leading-6" style={{ color: "rgba(255,255,255,0.78)" }}>
+                    <span className="uppercase tracking-[0.14em] text-[10px]" style={{ color: "var(--label)" }}>Summary</span>
+                    <br />
+                    {project.summary}
+                  </p>
+                  <p className="mt-4 text-sm font-light leading-6" style={{ color: "rgba(255,255,255,0.78)" }}>
+                    <span className="uppercase tracking-[0.14em] text-[10px]" style={{ color: "var(--label)" }}>Narrative</span>
+                    <br />
+                    {project.impact}
+                  </p>
+                </div>
+              ) : null}
               <div>
                 <p
                   className="text-[10px] uppercase tracking-[0.28em] font-light"
@@ -657,7 +731,7 @@ export function ProjectSidePanel({
                             <span className="text-xs uppercase tracking-[0.14em] font-light">{asset.label}</span>
                             </span>
                             {asset.description ? (
-                              <span className="mt-1 block text-[11px] font-light leading-5" style={{ color: "rgba(255,255,255,0.45)" }}>
+                              <span className="mt-1 block text-[11px] font-light leading-5" style={{ color: "rgba(255,255,255,0.74)" }}>
                                 {asset.description}
                               </span>
                             ) : null}
@@ -698,10 +772,10 @@ export function ProjectSidePanel({
                           <p className="mt-1 text-sm font-light" style={{ color: "#f0f0f0" }}>
                             {link.targetItemTitle}
                           </p>
-                          <p className="mt-1 text-xs font-light" style={{ color: "rgba(255,255,255,0.38)" }}>
+                          <p className="mt-1 text-xs font-light" style={{ color: "rgba(255,255,255,0.68)" }}>
                             {link.label}
                           </p>
-                          <p className="mt-2 text-xs font-light leading-5" style={{ color: "rgba(255,255,255,0.48)" }}>
+                          <p className="mt-2 text-xs font-light leading-5" style={{ color: "rgba(255,255,255,0.72)" }}>
                             {link.narrative || link.targetItemSummary}
                           </p>
                         </button>

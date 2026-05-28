@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 type SuggestionAsset = {
   id: string;
   label: string;
-  type: "image" | "video" | "doc" | "gallery";
+  type: "image" | "video" | "doc" | "iframe" | "gallery";
   description?: string;
 };
 
@@ -76,7 +76,7 @@ function fallbackSuggestion(body: SuggestionBody): SuggestionResponse {
       .filter((asset) => !asset.description?.trim())
       .map((asset) => ({
         assetId: asset.id,
-        description: `${asset.type === "video" ? "Video" : asset.type === "image" ? "Image" : asset.type === "gallery" ? "Gallery" : "Document"} supporting ${itemTitle.toLowerCase()} work.`,
+        description: `${asset.type === "video" ? "Video" : asset.type === "image" ? "Image" : asset.type === "gallery" ? "Gallery" : asset.type === "iframe" ? "Embed" : "Document"} supporting ${itemTitle.toLowerCase()} work.`,
       })),
   };
 }

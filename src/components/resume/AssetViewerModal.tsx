@@ -111,6 +111,32 @@ export function AssetViewerModal({ asset, isOpen, accentColor, onClose }: AssetV
               </div>
             )
           ) : null}
+
+          {asset.type === "iframe" ? (
+            asset.href ? (
+              <iframe
+                title={asset.label || "Embedded preview"}
+                src={asset.preview ?? asset.href}
+                className="h-[72vh] w-full bg-black"
+                allow="autoplay; fullscreen; xr-spatial-tracking"
+                referrerPolicy="strict-origin-when-cross-origin"
+                style={{ border: 0 }}
+                allowFullScreen
+              />
+            ) : (
+              <div
+                className="flex min-h-[40vh] flex-col items-center justify-center gap-6 p-10 text-center"
+                style={{ background: "#070709" }}
+              >
+                <p
+                  className="max-w-sm text-xs font-light leading-6"
+                  style={{ color: "var(--label)" }}
+                >
+                  This embed does not have a source URL yet.
+                </p>
+              </div>
+            )
+          ) : null}
         </div>
       </div>
     </div>

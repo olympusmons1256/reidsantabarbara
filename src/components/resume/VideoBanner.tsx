@@ -64,6 +64,15 @@ export function VideoBanner({
 }: VideoBannerProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [user, setUser] = useState<any>(null);
+  const [isSummaryExpanded, setIsSummaryExpanded] = useState(false);
+
+  const SUMMARY_PREVIEW_CHAR_LIMIT = 560;
+  const summaryText = (bio.summary || "").trim();
+  const canTruncateSummary = summaryText.length > SUMMARY_PREVIEW_CHAR_LIMIT;
+  const summaryPreviewText = canTruncateSummary
+    ? `${summaryText.slice(0, SUMMARY_PREVIEW_CHAR_LIMIT).replace(/\s+\S*$/, "").trimEnd()}…`
+    : summaryText;
+  const visibleSummaryText = isSummaryExpanded ? summaryText : summaryPreviewText;
   
   // Sync auth state
   useState(() => {
@@ -81,6 +90,11 @@ export function VideoBanner({
   const bannerVideoOpacity = Math.min(100, Math.max(0, typeof bio.bannerVideoOpacity === "number" ? bio.bannerVideoOpacity : 42));
   const bannerOverlayOpacity = Math.min(100, Math.max(0, typeof bio.bannerOverlayOpacity === "number" ? bio.bannerOverlayOpacity : 72));
   const bannerVideoFilter = (bio.bannerVideoFilter || "brightness(0.9) saturate(0.95)").trim() || "none";
+  const linkedInHref =
+    bio.links.find((link) => /linkedin/i.test(link.label))?.href
+    ?? bio.links.find((link) => /linkedin\.com\/in\//i.test(link.href))?.href
+    ?? "";
+  const hasHeadingMeta = Boolean(bio.title || bio.location || linkedInHref);
 
   return (
     <section className="relative w-full overflow-hidden" style={{ background: "#080809" }}>
@@ -145,7 +159,7 @@ export function VideoBanner({
         }}
       />
 
-      <div className="relative mx-auto flex w-full max-w-6xl flex-col justify-end px-8 pb-14 pt-32 sm:px-12 sm:pb-20 sm:pt-44">
+      <div className="relative mx-auto flex w-full max-w-6xl flex-col justify-end px-4 pb-10 pt-24 sm:px-8 sm:pb-14 sm:pt-32 md:px-12 md:pb-20 md:pt-44">
         {variants.length > 1 ? (
           <div className="mb-8">
             <p className="mb-2 text-[10px] uppercase tracking-[0.2em]" style={{ color: "var(--label)" }}>
@@ -175,7 +189,7 @@ export function VideoBanner({
           </div>
         ) : null}
 
-        <div>
+        <div className="max-w-3xl">
           {hasProfileContent && bio.heroImage ? (
             <div className="mb-6 relative h-28 w-28 overflow-hidden sm:h-36 sm:w-36" style={{ borderRadius: "2px", boxShadow: "0 0 40px rgba(255,255,255,0.08)" }}>
               <div
@@ -193,28 +207,82 @@ export function VideoBanner({
           >
             {bio.name || "Your Name"}
           </h1>
-          {(bio.title || bio.location) ? (
+          {hasHeadingMeta ? (
             <p
               className="mt-4 text-sm font-light sm:text-base"
-              style={{ color: "rgba(255,255,255,0.45)" }}
+              style={{ color: "rgba(255,255,255,0.84)" }}
             >
               {[bio.title, bio.location].filter(Boolean).join(" · ")}
+              {linkedInHref ? (
+                <>
+                  {(bio.title || bio.location) ? " · " : ""}
+                  <a
+                    href={linkedInHref}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ textDecorationLine: "underline", textUnderlineOffset: "2px" }}
+                  >
+                    LinkedIn
+                  </a>
+                </>
+              ) : null}
             </p>
           ) : null}
           {bio.summary ? (
-            <p
-              className="mt-5 max-w-2xl text-sm font-light leading-7"
-              style={{ color: "rgba(255,255,255,0.32)" }}
+            <div
+              className="mt-3 max-w-2xl text-sm font-light leading-7 inline-block"
+              style={{
+                color: "rgba(255,255,255,0.84)",
+                background: "rgba(8,8,9,0.55)",
+                borderRadius: "2px",
+                padding: "0.75rem 1rem",
+                backdropFilter: "blur(8px)",
+                WebkitBackdropFilter: "blur(8px)",
+              }}
             >
-              {bio.summary}
-            </p>
+              {visibleSummaryText
+                .split(/\n\s*\n/)
+                .map((paragraph) => paragraph.trim())
+                .filter(Boolean)
+                .map((paragraph, paragraphIndex) => (
+                  <p
+                    key={`bio-summary-paragraph-${paragraphIndex}`}
+                    className={paragraphIndex > 0 ? "mt-3" : undefined}
+                    style={{ whiteSpace: "pre-line" }}
+                  >
+                    {paragraph}
+                  </p>
+                ))}
+            </div>
           ) : (
-            <p className="mt-5 max-w-2xl text-sm font-light leading-7" style={{ color: "rgba(255,255,255,0.32)" }}>
+            <p
+              className="mt-3 max-w-2xl text-sm font-light leading-7 inline-block"
+              style={{
+                color: "rgba(255,255,255,0.84)",
+                background: "rgba(8,8,9,0.55)",
+                borderRadius: "2px",
+                padding: "0.75rem 1rem",
+                backdropFilter: "blur(8px)",
+                WebkitBackdropFilter: "blur(8px)",
+              }}
+            >
               Create multiple resume tracks, then switch between them using tags above (for example #Technical and #Creative).
             </p>
           )}
+          {canTruncateSummary ? (
+            <button
+              type="button"
+              onClick={() => setIsSummaryExpanded((current) => !current)}
+              className="mt-2 inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.2em] font-light transition hover:opacity-80"
+              style={{ color: "var(--label)" }}
+              aria-expanded={isSummaryExpanded}
+            >
+              <span aria-hidden>{isSummaryExpanded ? "−" : "…"}</span>
+              {isSummaryExpanded ? "Show less" : "Read more"}
+            </button>
+          ) : null}
           {bio.links.length ? (
-            <ul className="mt-7 flex flex-wrap gap-3">
+            <ul className="mt-4 flex flex-wrap gap-3">
               {bio.links.map((link) => (
                 <li key={link.label}>
                   <a
@@ -223,8 +291,8 @@ export function VideoBanner({
                     rel="noreferrer"
                     className="inline-flex px-3 py-1 text-[10px] uppercase tracking-[0.2em] font-light transition hover:opacity-80"
                     style={{
-                      color: "rgba(255,255,255,0.45)",
-                      border: "1px solid rgba(255,255,255,0.12)",
+                      color: "rgba(255,255,255,0.9)",
+                      border: "1px solid rgba(255,255,255,0.34)",
                       borderRadius: "2px",
                     }}
                   >
@@ -237,7 +305,7 @@ export function VideoBanner({
         </div>
 
         {/* Timeline Tour and Export Resume buttons */}
-        <div className="pointer-events-auto absolute bottom-6 right-8 flex items-center gap-2 sm:bottom-10 sm:right-12">
+        <div className="pointer-events-auto mt-8 flex flex-wrap items-center gap-2 sm:absolute sm:bottom-10 sm:right-12 sm:mt-0">
           <button
             type="button"
             onClick={onTimelineTourAction}
@@ -257,13 +325,13 @@ export function VideoBanner({
             onClick={onExportResumeAction}
             className="px-3 py-1 text-[10px] uppercase tracking-[0.2em] font-light transition hover:opacity-90"
             style={{
-              color: "rgba(255,255,255,0.75)",
+              color: "rgba(255,255,255,0.9)",
               background: "rgba(255,255,255,0.06)",
-              border: "1px solid rgba(255,255,255,0.22)",
+              border: "1px solid rgba(255,255,255,0.32)",
               borderRadius: "2px",
             }}
           >
-            Export Resume
+            Export PDF
           </button>
         </div>
 

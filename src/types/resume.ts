@@ -1,4 +1,4 @@
-export type ProjectAssetType = "image" | "video" | "doc" | "gallery";
+export type ProjectAssetType = "image" | "video" | "doc" | "iframe" | "gallery";
 
 export type ProjectAssetAspectRatio = "auto" | "16/9" | "4/3" | "1/1" | "3/4" | "9/16" | "21/9";
 
@@ -118,6 +118,7 @@ export type Project = {
 
 export type CompanyExperience = {
   id: string;
+  sectionType?: "experience" | "education" | "custom";
   company: string;
   role: string;
   period: string;

@@ -7,12 +7,15 @@ create table if not exists public.resume_templates (
   owner_id uuid references auth.users(id) on delete set null,
   title text not null,
   data jsonb not null,
+  is_published boolean not null default false,
+  published_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
 create index if not exists resume_templates_owner_id_idx on public.resume_templates(owner_id);
 create index if not exists resume_templates_updated_at_idx on public.resume_templates(updated_at desc);
+create index if not exists resume_templates_is_published_idx on public.resume_templates(is_published) where is_published = true;
 
 create or replace function public.set_updated_at()
 returns trigger
@@ -37,6 +40,12 @@ create policy "Templates are selectable by owner"
 on public.resume_templates
 for select
 using (auth.uid() = owner_id);
+
+drop policy if exists "Published templates are selectable publicly" on public.resume_templates;
+create policy "Published templates are selectable publicly"
+on public.resume_templates
+for select
+using (is_published = true);
 
 drop policy if exists "Templates are insertable by owner" on public.resume_templates;
 create policy "Templates are insertable by owner"

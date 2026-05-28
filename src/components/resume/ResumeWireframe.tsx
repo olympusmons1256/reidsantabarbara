@@ -356,43 +356,68 @@ export function ResumeWireframe() {
   };
 
   const handleExportResume = () => {
-    const groups = getExportGroups();
     const bio = runtimeData.bio;
+    const pdfTitle = `${(bio.name || "Resume").replace(/\s+/g, "-")}.pdf`;
 
-    const groupsMarkup = groups
-      .map((group) => {
-        const projectsMarkup = group.projects
-          .map(
-            (project) => `
+    // Build export groups from company sections, each with optional subgroup names
+    const exportSections = [...activeExperiences]
+      .sort((a, b) => compareByDateWindowDesc(a.period, b.period))
+      .map((company) => {
+        // Collect unique subgroup names
+        const subgroupNames: string[] = [];
+        const seen = new Set<string>();
+        (company.groupContainers ?? []).forEach((container) => {
+          const name = (container.title || "").trim();
+          if (name && !seen.has(name)) {
+            seen.add(name);
+            subgroupNames.push(name);
+          }
+        });
+        company.projects.forEach((project) => {
+          const name = (project.parentGroupTitle || "").trim();
+          if (name && !seen.has(name)) {
+            seen.add(name);
+            subgroupNames.push(name);
+          }
+        });
+
+        const subgroupMarkup = subgroupNames.length
+          ? subgroupNames.map((name) => `<p class="subgroup">${escapeHtml(name)}</p>`).join("")
+          : "";
+
+        const innovationProjects = company.projects.filter((p) => p.type === "innovation");
+        const innovationMarkup = innovationProjects.length
+          ? `<div class="innovations"><p class="innovations-label">Innovation</p>${innovationProjects.map((p) => `
               <article class="project">
                 <div class="project-head">
-                  <h4>${escapeHtml(project.title)}</h4>
-                  <span>${escapeHtml(project.dateRange || "")}</span>
+                  <h4>${escapeHtml(p.title)}</h4>
+                  <span>${escapeHtml(p.dateRange || "")}</span>
                 </div>
-                ${project.summary ? `<p class="summary">${escapeHtml(project.summary)}</p>` : ""}
-              </article>
-            `
-          )
-          .join("");
+                ${p.summary ? `<p class="summary">${escapeHtml(p.summary)}</p>` : ""}
+              </article>`).join("")}</div>`
+          : "";
 
         return `
           <section class="group">
             <header>
-              <h3>${escapeHtml(group.title)}</h3>
-              <p>${escapeHtml(group.subtitle || "")}</p>
+              <h3>${escapeHtml(company.company)}</h3>
+              <p>${escapeHtml([company.role, company.period].filter(Boolean).join(" · "))}</p>
             </header>
-            ${projectsMarkup}
+            ${company.description ? `<p class="summary">${escapeHtml(company.description)}</p>` : ""}
+            ${subgroupMarkup}
+            ${innovationMarkup}
           </section>
         `;
-      })
-      .join("");
+      });
+
+    const groupsMarkup = exportSections.join("");
 
     const printHtml = `
       <!doctype html>
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>${escapeHtml(bio.name || "Resume")}</title>
+          <title>${escapeHtml(pdfTitle)}</title>
           <style>
             @page { size: auto; margin: 0.6in; }
             body { font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: #111; }
@@ -409,6 +434,13 @@ export function ResumeWireframe() {
             .project-head { display: flex; justify-content: space-between; gap: 12px; }
             .project-head h4 { font-size: 13px; }
             .project-head span { font-size: 11px; color: #666; white-space: nowrap; }
+            .subgroup { margin-top: 5px; font-size: 11px; color: #555; padding-left: 8px; border-left: 2px solid #ddd; }
+            .innovations { margin-top: 10px; padding-top: 8px; border-top: 1px solid #eee; }
+            .innovations-label { font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: #999; margin-bottom: 6px; }
+            .project { margin-bottom: 8px; break-inside: avoid; }
+            .project-head { display: flex; justify-content: space-between; gap: 12px; }
+            .project-head h4 { font-size: 12px; font-weight: 500; }
+            .project-head span { font-size: 11px; color: #666; white-space: nowrap; }
           </style>
         </head>
         <body>
@@ -417,12 +449,12 @@ export function ResumeWireframe() {
             <p>${escapeHtml([bio.title, bio.location].filter(Boolean).join(" · "))}</p>
             ${bio.summary ? `<p class="summary">${escapeHtml(bio.summary)}</p>` : ""}
           </header>
-          ${groupsMarkup}
+          ${groupsMarkup || '<p class="summary">No projects are available in the current filter for export.</p>'}
         </body>
       </html>
     `;
 
-    const printWindow = window.open("", "_blank", "noopener,noreferrer,width=1100,height=850");
+    const printWindow = window.open("", "_blank", "width=1100,height=850");
     if (!printWindow) {
       return;
     }
@@ -431,9 +463,18 @@ export function ResumeWireframe() {
     printWindow.document.write(printHtml);
     printWindow.document.close();
     printWindow.focus();
-    window.setTimeout(() => {
+    const triggerPrint = () => {
       printWindow.print();
-    }, 250);
+      window.setTimeout(() => {
+        printWindow.close();
+      }, 300);
+    };
+
+    if (printWindow.document.readyState === "complete") {
+      window.setTimeout(triggerPrint, 120);
+    } else {
+      printWindow.addEventListener("load", () => window.setTimeout(triggerPrint, 120), { once: true });
+    }
   };
 
   useEffect(() => {
