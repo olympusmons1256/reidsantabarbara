@@ -43,6 +43,7 @@ export type RuntimeResumeData = {
   };
   timelineTourEntryIds: string[];
   timelineTourDurations: Record<string, number>;
+  timelineTourStepLabels: string[];
   variants: Array<{ id: string; title: string; audience?: string }>;
   activeVariantId: string;
   activeVariantTitle: string;
@@ -399,6 +400,7 @@ export function transformTemplateToRuntimeResume(
       sortLabels: { activation: "Activation Type", role: "Role" },
       timelineTourEntryIds: [],
       timelineTourDurations: {},
+      timelineTourStepLabels: [],
       variants: [],
       activeVariantId: "",
       activeVariantTitle: "",
@@ -685,6 +687,7 @@ export function transformTemplateToRuntimeResume(
   const timelineTourDurations: Record<string, number> = Object.fromEntries(
     activeVariant.timelineTour.steps.map((step) => [`${step.sectionId}::${step.itemId}`, step.durationMs])
   );
+  const timelineTourStepLabels = activeVariant.timelineTour.steps.map((step) => step.label);
 
   const itemLookup = new Map<
     string,
@@ -772,6 +775,7 @@ export function transformTemplateToRuntimeResume(
     },
     timelineTourEntryIds,
     timelineTourDurations,
+    timelineTourStepLabels,
     variants: template.variants.map((variant) => ({
       id: variant.id,
       title: variant.title,

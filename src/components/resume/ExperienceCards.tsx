@@ -28,7 +28,15 @@ type ExperienceCardsProps = {
   };
   timelineTourEntryIds?: string[];
   timelineTourDurations?: Record<string, number>;
+  timelineTourStepLabels?: string[];
   connectionCounts?: Record<string, number>;
+};
+
+type TimelineTourStop = {
+  element: HTMLElement;
+  entryId: string;
+  durationKey: string;
+  stepLabel?: string;
 };
 
 export function ExperienceCards({
@@ -46,6 +54,7 @@ export function ExperienceCards({
   sortLabels,
   timelineTourEntryIds,
   timelineTourDurations,
+  timelineTourStepLabels,
   connectionCounts,
 }: ExperienceCardsProps) {
   const innovationAccent = "#facc15";
@@ -377,7 +386,7 @@ export function ExperienceCards({
   const [pressedProjectId, setPressedProjectId] = useState<string | null>(null);
   const [isTourActive, setIsTourActive] = useState(false);
   const [tourStepIndex, setTourStepIndex] = useState<number | null>(null);
-  const [tourStops, setTourStops] = useState<HTMLElement[]>([]);
+  const [tourStops, setTourStops] = useState<TimelineTourStop[]>([]);
   const tourSessionRef = useRef(0);
   const handlersRef = useRef({ onSelectProject, onFocusProject, onFocusParentGroup });
 
@@ -385,7 +394,11 @@ export function ExperienceCards({
     handlersRef.current = { onSelectProject, onFocusProject, onFocusParentGroup };
   }, [onSelectProject, onFocusProject, onFocusParentGroup]);
 
-  const activeTourEntry = tourStepIndex !== null ? timelineEntries[tourStepIndex] : null;
+  const activeTourStop = tourStepIndex !== null ? tourStops[tourStepIndex] ?? null : null;
+  const activeTourEntry = activeTourStop
+    ? timelineEntries.find((item) => item.id === activeTourStop.entryId) ?? null
+    : null;
+  const activeTourStepTitle = activeTourStop?.stepLabel?.trim() || activeTourEntry?.project.title || "Preparing tour...";
 
   const experienceHeading = isTimelineMode
     ? "Project Timeline"
@@ -421,10 +434,15 @@ export function ExperienceCards({
     });
 
     const orderedStopsWithDurationKey = (timelineTourEntryIds ?? [])
-      .map((configuredEntryId) => {
+      .map((configuredEntryId, index) => {
         const exact = stopByEntryId.get(configuredEntryId);
         if (exact) {
-          return { stop: exact, durationKey: configuredEntryId };
+          return {
+            element: exact,
+            entryId: configuredEntryId,
+            durationKey: configuredEntryId,
+            stepLabel: timelineTourStepLabels?.[index],
+          } satisfies TimelineTourStop;
         }
 
         const configuredItemId = configuredEntryId.split("::").pop() ?? "";
@@ -433,13 +451,27 @@ export function ExperienceCards({
         }
 
         const stop = stopByItemId.get(configuredItemId);
-        return stop ? { stop, durationKey: configuredEntryId } : null;
+        return stop
+          ? {
+              element: stop,
+              entryId: stop.dataset.timelineEntryId ?? configuredEntryId,
+              durationKey: configuredEntryId,
+              stepLabel: timelineTourStepLabels?.[index],
+            } satisfies TimelineTourStop
+          : null;
       })
-      .filter((entry): entry is { stop: HTMLElement; durationKey: string } => Boolean(entry));
+      .filter((entry): entry is TimelineTourStop => Boolean(entry));
 
     const effectiveStops = orderedStopsWithDurationKey.length
-      ? orderedStopsWithDurationKey.map((entry) => entry.stop)
-      : stops;
+      ? orderedStopsWithDurationKey
+      : stops.map((stop) => {
+          const entryId = stop.dataset.timelineEntryId ?? "";
+          return {
+            element: stop,
+            entryId,
+            durationKey: entryId,
+          } satisfies TimelineTourStop;
+        });
 
     setTourStops(effectiveStops);
     setIsTourActive(true);
@@ -448,8 +480,7 @@ export function ExperienceCards({
     // Initialize first step display
     if (effectiveStops.length > 0) {
       const stop = effectiveStops[0];
-      const entryId = stop.dataset.timelineEntryId;
-      const entry = timelineEntries.find((item) => item.id === entryId);
+      const entry = timelineEntries.find((item) => item.id === stop.entryId);
 
       if (entry) {
         handlersRef.current.onSelectProject(entry.project);
@@ -460,10 +491,10 @@ export function ExperienceCards({
           media: entry.companyFocusMedia,
         });
         setHoveredProjectId(entry.id);
-        stop.scrollIntoView({ behavior: "smooth", block: "center" });
+        stop.element.scrollIntoView({ behavior: "smooth", block: "center" });
       }
     }
-  }, [isTimelineMode, timelineEntries, timelineTourRunId, timelineTourEntryIds, timelineTourDurations]);
+  }, [isTimelineMode, timelineEntries, timelineTourRunId, timelineTourEntryIds, timelineTourDurations, timelineTourStepLabels]);
 
   const handleTourNext = () => {
     if (tourStepIndex === null || tourStepIndex >= tourStops.length - 1) {
@@ -472,8 +503,7 @@ export function ExperienceCards({
 
     const nextIndex = tourStepIndex + 1;
     const stop = tourStops[nextIndex];
-    const entryId = stop.dataset.timelineEntryId;
-    const entry = timelineEntries.find((item) => item.id === entryId);
+    const entry = timelineEntries.find((item) => item.id === stop.entryId);
 
     if (entry) {
       setTourStepIndex(nextIndex);
@@ -487,7 +517,7 @@ export function ExperienceCards({
       setHoveredProjectId(entry.id);
     }
 
-    stop.scrollIntoView({ behavior: "smooth", block: "center" });
+    stop.element.scrollIntoView({ behavior: "smooth", block: "center" });
   };
 
   const handleTourPrev = () => {
@@ -497,8 +527,7 @@ export function ExperienceCards({
 
     const prevIndex = tourStepIndex - 1;
     const stop = tourStops[prevIndex];
-    const entryId = stop.dataset.timelineEntryId;
-    const entry = timelineEntries.find((item) => item.id === entryId);
+    const entry = timelineEntries.find((item) => item.id === stop.entryId);
 
     if (entry) {
       setTourStepIndex(prevIndex);
@@ -512,7 +541,7 @@ export function ExperienceCards({
       setHoveredProjectId(entry.id);
     }
 
-    stop.scrollIntoView({ behavior: "smooth", block: "center" });
+    stop.element.scrollIntoView({ behavior: "smooth", block: "center" });
   };
 
   const handleTourReset = () => {
@@ -521,8 +550,7 @@ export function ExperienceCards({
     }
 
     const stop = tourStops[0];
-    const entryId = stop.dataset.timelineEntryId;
-    const entry = timelineEntries.find((item) => item.id === entryId);
+    const entry = timelineEntries.find((item) => item.id === stop.entryId);
 
     if (entry) {
       setTourStepIndex(0);
@@ -536,7 +564,7 @@ export function ExperienceCards({
       setHoveredProjectId(entry.id);
     }
 
-    stop.scrollIntoView({ behavior: "smooth", block: "center" });
+    stop.element.scrollIntoView({ behavior: "smooth", block: "center" });
   };
 
   return (
@@ -601,13 +629,13 @@ export function ExperienceCards({
                   Timeline Tour
                 </p>
                 <p className="mt-1 text-xs font-light" style={{ color: "var(--label)" }}>
-                  Step {tourStepIndex !== null ? tourStepIndex + 1 : 0} of {timelineEntries.length}
+                  Step {tourStepIndex !== null ? tourStepIndex + 1 : 0} of {tourStops.length}
                 </p>
                 <p className="mt-2 text-sm font-light" style={{ color: "#f0f0f0" }}>
-                  {activeTourEntry ? activeTourEntry.companyName : "Preparing tour..."}
+                  {activeTourStepTitle}
                 </p>
                 <p className="mt-0.5 text-xs font-light" style={{ color: "rgba(255,255,255,0.72)" }}>
-                  {activeTourEntry ? activeTourEntry.project.title : ""}
+                  {activeTourEntry ? `${activeTourEntry.companyName}${activeTourEntry.companyPeriod ? ` · ${activeTourEntry.companyPeriod}` : ""}` : ""}
                 </p>
                 {activeTourEntry && activeTourEntry.project.summary ? (
                   <p className="mt-2 text-xs font-light leading-5" style={{ color: "rgba(255,255,255,0.6)" }}>

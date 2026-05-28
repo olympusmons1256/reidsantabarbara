@@ -201,6 +201,7 @@ type RuntimeData = {
   };
   timelineTourEntryIds?: string[];
   timelineTourDurations?: Record<string, number>;
+  timelineTourStepLabels?: string[];
   variants?: Array<{ id: string; title: string; audience?: string }>;
   activeVariantId?: string;
   activeVariantTitle?: string;
@@ -809,6 +810,7 @@ export function ResumeWireframe() {
           sortLabels={runtimeData.sortLabels}
           timelineTourEntryIds={runtimeData.timelineTourEntryIds}
           timelineTourDurations={runtimeData.timelineTourDurations}
+          timelineTourStepLabels={runtimeData.timelineTourStepLabels}
           connectionCounts={runtimeData.connectionCounts}
         />
         {!hasResumeItems ? (
