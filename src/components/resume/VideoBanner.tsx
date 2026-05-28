@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import type { Bio } from "@/types/resume";
@@ -75,11 +75,13 @@ export function VideoBanner({
   const visibleSummaryText = isSummaryExpanded ? summaryText : summaryPreviewText;
   
   // Sync auth state
-  useState(() => {
+  useEffect(() => {
     const client = getSupabaseBrowserClient();
-    client.auth.onAuthStateChange((event, session) => {
-      setUser(session?.user ?? null);
-    });
+    if (client) {
+      client.auth.onAuthStateChange((event, session) => {
+        setUser(session?.user ?? null);
+      });
+    }
   }, []);
 
   const hasProfileContent = Boolean(bio.name || bio.title || bio.location || bio.summary || bio.links.length);

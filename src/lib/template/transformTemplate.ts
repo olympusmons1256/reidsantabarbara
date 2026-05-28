@@ -604,7 +604,7 @@ export function transformTemplateToRuntimeResume(
         assetLayout: item.assetLayout ?? "list",
         coverAssetId: item.coverAssetId,
         credits: (item.credits ?? []).filter((credit) => credit.name?.trim() || credit.role?.trim()),
-        type: item.type ?? "standard",
+        type: item.type === "group" ? "standard" : (item.type ?? "standard"),
         parentGroupId: parentGroupItem?.id,
         parentGroupTitle: parentGroupItem?.title?.trim() || undefined,
         parentGroupDateRange: parentGroupItem?.dateRange?.trim() || undefined,

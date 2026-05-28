@@ -100,6 +100,10 @@ function inferUploadedAssetType(file: File): Exclude<TemplateAsset["type"], "gal
   return "image";
 }
 
+function isPdfSource(url: string): boolean {
+  return url.toLowerCase().includes(".pdf");
+}
+
 function inferAssetTypeFromUrl(rawUrl: string): Exclude<TemplateAsset["type"], "gallery"> {
   const url = rawUrl.toLowerCase();
 
@@ -4030,7 +4034,7 @@ export function TemplateEditor() {
                                                   <img src={previewSrc} alt={childAsset.label || "Gallery preview"} className="pointer-events-none h-full w-full" style={{ objectFit: childAsset.fit ?? "cover", objectPosition: `${childAsset.focusX ?? 50}% ${childAsset.focusY ?? 50}%` }} />
                                                 ) : childAsset.type === "video" && previewSrc ? (
                                                   <video src={previewSrc} className="pointer-events-none h-full w-full" muted loop autoPlay playsInline style={{ objectFit: childAsset.fit ?? "cover", objectPosition: `${childAsset.focusX ?? 50}% ${childAsset.focusY ?? 50}%` }} />
-                                                ) : childAsset.type === "doc" && previewSrc && isPdfSource(previewSrc, childAsset.mimeType) ? (
+                                                ) : childAsset.type === "doc" && previewSrc && isPdfSource(previewSrc) ? (
                                                   <iframe src={`${previewSrc}#toolbar=0&navpanes=0&scrollbar=0`} title={childAsset.label || "Gallery document preview"} className="pointer-events-none h-full w-full bg-black" />
                                                 ) : childAsset.type === "iframe" && previewSrc ? (
                                                   <iframe src={previewSrc} title={childAsset.label || "Gallery embed preview"} className="pointer-events-none h-full w-full bg-black" style={{ border: 0 }} />
