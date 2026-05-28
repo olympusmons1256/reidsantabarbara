@@ -444,6 +444,25 @@ export function ExperienceCards({
     setTourStops(effectiveStops);
     setIsTourActive(true);
     setTourStepIndex(0);
+
+    // Initialize first step display
+    if (effectiveStops.length > 0) {
+      const stop = effectiveStops[0];
+      const entryId = stop.dataset.timelineEntryId;
+      const entry = timelineEntries.find((item) => item.id === entryId);
+
+      if (entry) {
+        handlersRef.current.onSelectProject(entry.project);
+        handlersRef.current.onFocusProject(entry.project);
+        handlersRef.current.onFocusParentGroup({
+          id: entry.companyId,
+          label: entry.companyName,
+          media: entry.companyFocusMedia,
+        });
+        setHoveredProjectId(entry.id);
+        stop.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }
   }, [isTimelineMode, timelineEntries, timelineTourRunId, timelineTourEntryIds, timelineTourDurations]);
 
   const handleTourNext = () => {
@@ -590,6 +609,11 @@ export function ExperienceCards({
                 <p className="mt-0.5 text-xs font-light" style={{ color: "rgba(255,255,255,0.72)" }}>
                   {activeTourEntry ? activeTourEntry.project.title : ""}
                 </p>
+                {activeTourEntry && activeTourEntry.project.summary ? (
+                  <p className="mt-2 text-xs font-light leading-5" style={{ color: "rgba(255,255,255,0.6)" }}>
+                    {activeTourEntry.project.summary}
+                  </p>
+                ) : null}
               </div>
               <div className="flex items-center justify-between gap-2 px-4 py-2.5">
                 <div className="h-1.5 flex-1 overflow-hidden" style={{ background: "rgba(255,255,255,0.08)", borderRadius: "999px" }}>

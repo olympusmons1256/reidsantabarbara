@@ -360,53 +360,39 @@ export function ResumeWireframe() {
     const pdfTitle = `${(bio.name || "Resume").replace(/\s+/g, "-")}.pdf`;
 
     // Use the same sort/grouping logic as the display
-    const exportGroups = getExportGroups();
+    let exportGroups = getExportGroups();
+
+    // Sort education to bottom
+    exportGroups = [
+      ...exportGroups.filter((g) => g.title.toLowerCase() !== "education"),
+      ...exportGroups.filter((g) => g.title.toLowerCase() === "education"),
+    ];
 
     // Build export sections from the sorted groups
     const exportSections = exportGroups.map((group) => {
-      const company = {
-        company: group.title,
-        role: group.subtitle?.split(" · ")[0] || "",
-        period: group.subtitle?.split(" · ")[1] || "",
-        projects: group.projects,
-      };
-      // Collect unique subgroup names
-        const subgroupNames: string[] = [];
-        const seen = new Set<string>();
-        (company.projects || []).forEach((project) => {
-          const name = (project.parentGroupTitle || "").trim();
-          if (name && !seen.has(name)) {
-            seen.add(name);
-            subgroupNames.push(name);
-          }
-        });
+      const projects = group.projects || [];
 
-        const subgroupMarkup = subgroupNames.length
-          ? subgroupNames.map((name) => `<p class="subgroup">${escapeHtml(name)}</p>`).join("")
-          : "";
-
-        const innovationProjects = (company.projects || []).filter((p) => p.type === "innovation");
-        const innovationMarkup = innovationProjects.length
-          ? `<div class="innovations"><p class="innovations-label">Innovation</p>${innovationProjects.map((p) => `
-              <article class="project">
-                <div class="project-head">
-                  <h4>${escapeHtml(p.title)}</h4>
-                  <span>${escapeHtml(p.dateRange || "")}</span>
-                </div>
-                ${p.summary ? `<p class="summary">${escapeHtml(p.summary)}</p>` : ""}
-              </article>`).join("")}</div>`
-          : "";
-
-        return `
-          <section class="group">
-            <header>
-              <h3>${escapeHtml(company.company)}</h3>
-              <p>${escapeHtml(company.period)}</p>
-            </header>
-            ${subgroupMarkup}
-            ${innovationMarkup}
-          </section>
-        `;
+      return `
+        <section class="group">
+          <header>
+            <h3>${escapeHtml(group.title)}</h3>
+            <p>${escapeHtml(group.subtitle || "")}</p>
+          </header>
+          ${projects
+            .map(
+              (project) => `
+            <article class="project">
+              <div class="project-head">
+                <h4>${escapeHtml(project.title)}</h4>
+                <span>${escapeHtml(project.dateRange || "")}</span>
+              </div>
+              ${project.summary ? `<p class="summary">${escapeHtml(project.summary)}</p>` : ""}
+            </article>
+          `
+            )
+            .join("")}
+        </section>
+      `;
       });
 
     const groupsMarkup = exportSections.join("");
